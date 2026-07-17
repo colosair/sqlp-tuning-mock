@@ -43,7 +43,7 @@ Id  Pid  Operation                                   ( Cost   Card   Bytes )
  1    0   NESTED LOOPS                               (  285   1850   96200 )
  2    1    TABLE ACCESS BY INDEX ROWID  배송내역       (  280   1850   64750 )
  3    2     INDEX RANGE SCAN  배송_IX                 (   18   7400         )
- 4    1    TABLE ACCESS BY INDEX ROWID  지점           (    1      1     17 )
+ 4    1    TABLE ACCESS BY INDEX ROWID  지점           (    1      1      17 )
  5    4     INDEX UNIQUE SCAN  지점_PK                (    0      1         )
 ```
 

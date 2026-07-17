@@ -1,6 +1,6 @@
 """rich md(문제/mock-*.md)를 직접 읽어 노랭이 룩 시험지 PDF를 만듭니다.
 
-    python _tools/render.py [출력.pdf]
+    python _tools/render.py [회차] [출력.pdf]      # 회차 기본값 1회차
 
 중간 DSL을 거치지 않고 md를 파싱합니다. 실행계획·TKPROF 표의 ASCII 정렬을
 위해 한글이 정확히 2배폭인 고정폭 폰트(굴림체, gulim.ttc subfontIndex=1)를
@@ -10,6 +10,7 @@
 import html
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
 from reportlab.lib import colors
@@ -30,7 +31,7 @@ FONT_MONO = r"C:\Windows\Fonts\gulim.ttc"
 FONT_MONO_SUBFONT = 1  # 0=굴림 1=굴림체(고정폭)
 
 ROOT = Path(__file__).resolve().parent.parent
-문제_DIR = ROOT / "문제"
+DEFAULT_ROUND = "1회차"
 
 A4W, A4H = A4
 LM = RM = 18 * mm
@@ -89,6 +90,105 @@ def esc_plain(t):
     return t
 
 
+def _dw(s):
+    """디스플레이 폭. 굴림체 고정폭에서 동아시아 폭(W/F) 문자는 정확히 2배."""
+    return sum(2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1 for ch in s)
+
+
+def _is_div(s):
+    b = s.strip()
+    return b != "" and set(b) <= set("-:+ ")
+
+
+def _pipe_block(rows_txt):
+    """`|` 구분 표를 디스플레이 폭 기준으로 재정렬(한글=2배폭 보정)."""
+    rows = [ln.split("|") for ln in rows_txt]
+    ncol = max(len(r) for r in rows)
+    for r in rows:
+        r += [""] * (ncol - len(r))
+    div = ["".join(r) and _is_div("".join(r)) for r in rows]
+    widths = [0] * ncol
+    for r, d in zip(rows, div):
+        if d:
+            continue
+        for i, c in enumerate(r):
+            widths[i] = max(widths[i], _dw(c.rstrip()))
+    out = []
+    for r, d in zip(rows, div):
+        cells = []
+        for i, c in enumerate(r):
+            if i == 0 or i == ncol - 1:
+                cells.append(c)                      # 바깥 여백·들여쓰기 보존
+            elif d:
+                cells.append("-" * widths[i])
+            else:
+                body = c.rstrip()
+                cells.append(body + " " * (widths[i] - _dw(body)))
+        out.append("|".join(cells))
+    return out
+
+
+def _realign_pipes(lines):
+    out, block = [], []
+
+    def flush():
+        out.extend(_pipe_block(block) if len(block) >= 2 else block)
+        block.clear()
+
+    for ln in lines:
+        if "|" in ln:
+            block.append(ln)
+        else:
+            flush()
+            out.append(ln)
+    flush()
+    return "\n".join(out)
+
+
+def _is_paren_plan(lines):
+    has_hdr = any("(" in ln and re.search(r"Cost|COST|Card|CARD|Bytes|BYTES", ln) for ln in lines)
+    data = sum(1 for ln in lines if ln.rstrip().endswith(")") and "=" not in ln)
+    return has_hdr and data >= 2
+
+
+def _realign_paren(lines):
+    """구식 들여쓰기 트리(`… ( Cost Card Bytes )`)에서 `(` 열을 세로로 맞춘다."""
+    idx = [ln.rfind("(") for ln in lines]
+    maxw = max((_dw(ln[:i].rstrip()) for ln, i in zip(lines, idx) if i >= 0), default=0)
+    rebuilt, total = [], 0
+    for ln, i in zip(lines, idx):
+        if i < 0:
+            rebuilt.append(None)
+        else:
+            left = ln[:i].rstrip()
+            r = left + " " * (maxw - _dw(left)) + " " + ln[i:].rstrip()
+            rebuilt.append(r)
+            total = max(total, _dw(r))
+    out = []
+    for r, ln in zip(rebuilt, lines):
+        if r is not None:
+            out.append(r)
+        elif _is_div(ln):
+            out.append("-" * total)
+        else:
+            out.append(ln)
+    return "\n".join(out)
+
+
+def realign_box(code):
+    """실행계획/표 박스의 ASCII 정렬을 디스플레이 폭 기준으로 재계산.
+
+    한글은 굴림체에서 2배폭이라, 글자 수로 맞춘 소스는 한글 셀 뒤 열이 밀린다.
+    파이프 표와 구식 괄호 트리를 자동 교정하고, 그 외(TKPROF·타임라인 등
+    한글이 행 끝에 오는 표)는 손대지 않는다."""
+    lines = code.split("\n")
+    if any("|" in ln for ln in lines):
+        return _realign_pipes(lines)
+    if _is_paren_plan(lines):
+        return _realign_paren(lines)
+    return code
+
+
 def num_box(n):
     cell = Table([[Paragraph(str(n), S["num"])]], colWidths=[9.5 * mm], rowHeights=[7 * mm])
     cell.setStyle(TableStyle([
@@ -103,7 +203,7 @@ def below_box(code):
     ribbon = Table([[Paragraph("아 래", S["boxtitle"])]], colWidths=[20 * mm], rowHeights=[5.4 * mm])
     ribbon.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), DARK), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                                 ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
-    body = Preformatted(code.strip("\n"), S["mono"], maxLineLength=130)
+    body = Preformatted(realign_box(code.strip("\n")), S["mono"], maxLineLength=130)
     inner = Table([[ribbon], [body]], colWidths=[CONTENT - IND])
     inner.setStyle(TableStyle([
         ("BACKGROUND", (0, 1), (0, 1), LIGHTBG), ("BOX", (0, 0), (-1, -1), 0.5, GRAY),
@@ -212,7 +312,7 @@ def render_why(why):
             continue
         cb = re.match(r"```[a-z]*\n(.*?)\n```", p, re.S)
         if cb:
-            flow.append(Preformatted(cb.group(1), S["mono"], maxLineLength=130))
+            flow.append(Preformatted(realign_box(cb.group(1)), S["mono"], maxLineLength=130))
             flow.append(Spacer(1, 1.5 * mm))
         else:
             for line in p.split("\n"):
@@ -262,10 +362,11 @@ def footer(canvas, doc):
     canvas.restoreState()
 
 
-def build():
-    files = sorted(문제_DIR.glob("mock-*.md"), key=lambda p: int(re.search(r"mock-(\d+)", p.name).group(1)))
+def build(round_dir):
+    files = sorted((round_dir / "문제").glob("mock-*.md"),
+                   key=lambda p: int(re.search(r"mock-(\d+)", p.name).group(1)))
     qs = [parse(f) for f in files]
-    story = [Paragraph("SQLP 과목 III 튜닝 스타일 모의문제", S["title"]),
+    story = [Paragraph(f"SQLP 과목 III 튜닝 스타일 모의문제 · {round_dir.name}", S["title"]),
              Spacer(1, 2 * mm),
              Paragraph(f"SQL 자격검정 실전문제 3장 스타일 · 4지선다 · 총 {len(qs)}문항 · 원본 창작", S["intro"]),
              Spacer(1, 1 * mm), HRFlowable(width="100%", thickness=1.0, color=DARK), Spacer(1, 5 * mm)]
@@ -283,11 +384,17 @@ def build():
 
 
 def main():
-    out = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "모의고사_20문항.pdf"
+    args = [a for a in sys.argv[1:]]
+    round_name = args[0] if args else DEFAULT_ROUND
+    round_dir = Path(round_name)
+    if not round_dir.is_absolute():
+        round_dir = ROOT / round_name
+    out = Path(args[1]) if len(args) > 1 else round_dir / f"모의고사_{round_dir.name}.pdf"
     register(); styles()
     doc = SimpleDocTemplate(str(out), pagesize=A4, leftMargin=LM, rightMargin=RM,
-                            topMargin=16 * mm, bottomMargin=15 * mm, title="SQLP 과목 III 모의문제")
-    doc.build(build(), onFirstPage=footer, onLaterPages=footer)
+                            topMargin=16 * mm, bottomMargin=15 * mm,
+                            title=f"SQLP 과목 III 모의문제 {round_dir.name}")
+    doc.build(build(round_dir), onFirstPage=footer, onLaterPages=footer)
     print(out)
 
 

@@ -1,6 +1,6 @@
 """생성 모의문항이 AGENTS.md 규약·품질 스펙을 지키는지 검증합니다.
 
-    python _tools/verify.py
+    python _tools/verify.py [회차]      # 회차 기본값 1회차
 
 노랭이 121 verify.py를 각색: 책 좌표 게이트를 빼고, 생성 문항용 게이트
 (시대착오 가드·밀도 가드·clean-room 표식·분포)를 더했습니다.
@@ -12,7 +12,7 @@ from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-문제_DIR = ROOT / "문제"
+DEFAULT_ROUND = "1회차"
 # 노랭이 저장소의 통제 어휘를 재사용(대상개념 검증). 경로가 없으면 태그 검사 건너뜀.
 태그_사전 = ROOT.parent / "SQL 자격검정 실전문제 - 노랭이" / "분석" / "개념태그_사전.md"
 
@@ -57,6 +57,16 @@ def 리스트필드(v):
 
 
 def main():
+    round_name = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_ROUND
+    round_dir = Path(round_name)
+    if not round_dir.is_absolute():
+        round_dir = ROOT / round_name
+    문제_DIR = round_dir / "문제"
+    if not 문제_DIR.exists():
+        print(f"문제 디렉토리 없음: {문제_DIR}")
+        sys.exit(1)
+    print(f"검증 대상: {round_dir.name}\n")
+
     사전 = 통제어휘()
     errs, warns = [], []
     seen = {}
