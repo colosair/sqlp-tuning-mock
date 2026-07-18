@@ -48,13 +48,20 @@ def 실제빈도():
 
 
 def 테이블명(t):
-    """[아 래]·발문에서 테이블명 후보를 헐겁게 수집(clean-room 감사 보조)."""
+    """발문·SQL에서 테이블/도메인 후보를 폭넓게 수집(clean-room 감사 보조)."""
     names = set()
-    for m in re.finditer(r"(?:FROM|JOIN|TABLE|INTO|UPDATE)\s+([A-Za-z가-힣][\w가-힣]*)", t):
+    # SQL의 FROM/JOIN/INTO/UPDATE 뒤 식별자
+    for m in re.finditer(r"(?:FROM|JOIN|TABLE|INTO|UPDATE|MERGE\s+INTO)\s+`?([A-Za-z가-힣][\w가-힣]*)", t):
         names.add(m.group(1))
-    for m in re.finditer(r"([가-힣]{2,}(?:내역|이력|정보|원장|로그|테이블|측정|상세))", t):
+    # 백틱 인용 식별자(문항이 테이블명을 `…`로 표기) — 한글 2자+ 만
+    for m in re.finditer(r"`([가-힣][\w가-힣]{1,})`", t):
         names.add(m.group(1))
-    return names
+    # 도메인성 접미사 명사
+    for m in re.finditer(r"([가-힣]{2,}(?:내역|이력|정보|원장|로그|테이블|측정|상세|계약|접수|집계|마스터|현황|실적|기록|명세|대장))", t):
+        names.add(m.group(1))
+    # 대상개념·자극 키워드 등 흔한 기술어 제외
+    stop = {"실행계획", "인덱스", "파티션", "트랜잭션", "옵티마이저", "히스토그램", "테이블"}
+    return {n for n in names if n not in stop and len(n) >= 2}
 
 
 def collect():
