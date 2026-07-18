@@ -6,7 +6,7 @@
 문제유형: 직접지목형
 보조자료: 실행계획
 DBMS: 오라클
-정답: 1
+정답: 3
 선택지유형: 서술형
 함정유형: [값스왑]
 대상개념: [PQ_DISTRIBUTE, 병렬_조인, 데이터_재분배]
@@ -43,19 +43,19 @@ DBMS: 오라클
 
 ### 선택지
 
-① 처방전과 조제내역을 **양쪽 다 조인 키(처방ID) 해시로 재분배**한다(hash-hash). 두 테이블 모두 대형이라 소형을 전체 복제하는 broadcast는 각 서버에 큰 테이블을 통째로 반복 복제해 비용이 과다하므로, 각 입력을 PX SEND HASH로 한 번씩만 재분배해 같은 해시 버킷끼리 조인한다.
+① 두 테이블이 처방ID로 동일하게 파티셔닝돼 있어, 각 서버가 대응 파티션 쌍만 PX SEND 없이 조인하는 파티션 와이즈 조인이다.
 
 ② 소형 조제내역을 병렬 서버 전체에 복제(broadcast)하고, 대형 처방전은 재분배 없이 각 서버가 자기 조각만 스캔하는 broadcast-none 분배다.
 
-③ 두 테이블이 처방ID로 동일하게 파티셔닝돼 있어, 각 서버가 대응 파티션 쌍만 PX SEND 없이 조인하는 파티션 와이즈 조인이다.
+③ 처방전과 조제내역을 **양쪽 다 조인 키(처방ID) 해시로 재분배**한다(hash-hash). 두 테이블 모두 대형이라 소형을 전체 복제하는 broadcast는 각 서버에 큰 테이블을 통째로 반복 복제해 비용이 과다하므로, 각 입력을 PX SEND HASH로 한 번씩만 재분배해 같은 해시 버킷끼리 조인한다.
 
 ④ 대형 처방전을 처방ID 해시로 재분배하고, 소형 조제내역을 병렬 서버 전체에 복제(broadcast)하는 hash-broadcast 분배다.
 
 ---
 
-### 정답 — ①
+### 정답 — ③
 
-### 왜 ①인가
+### 왜 ③인가
 
 분배 방식은 **조인(Id 3)의 두 입력이 각각 어떤 PX SEND를 거치는지**로 읽습니다.
 
@@ -73,21 +73,21 @@ Id 3  HASH JOIN (Q1,02) ← Id 4·Id 8 PX RECEIVE로 양쪽을 받아 조인
 양쪽에 `PX SEND HASH`가 있는 이 방식이 **hash-hash 분배**입니다. 여기서 broadcast를 쓰지 않은 이유가 발문의 핵심입니다. broadcast는 한쪽 테이블을 **모든 병렬 서버에 통째로 복제**하는 방식이라, 소형이 아주 작을 때만 이득입니다. 그런데 이 조인은 작은 쪽(조제내역)도 8,900만 건으로 대형이라, 이를 서버 수만큼 복제하면 복제량이 폭증합니다. 그래서 각 입력을 **한 번씩만** 해시 재분배하는 hash-hash가 선택됩니다.
 
 ```text
-① hash-hash      : 처방전 = SEND HASH,  조제내역 = SEND HASH   → Id 5·Id 9와 일치        ✔
+③ hash-hash      : 처방전 = SEND HASH,  조제내역 = SEND HASH   → Id 5·Id 9와 일치        ✔
 ② broadcast-none : 소형 = SEND BROADCAST, 대형 = 로컬 스캔      → BROADCAST 노드 없음
-③ partition-wise : 조인 입력에 PX SEND 없음                     → Id 5·Id 9에 SEND HASH 있음
+① partition-wise : 조인 입력에 PX SEND 없음                     → Id 5·Id 9에 SEND HASH 있음
 ④ hash-broadcast : 한쪽 SEND HASH + 다른 쪽 SEND BROADCAST      → 양쪽 다 SEND HASH라 불일치
 ```
 
-조인 입력 양쪽에 `PX SEND HASH`가 나란히 있다는 사실이 broadcast·partition-wise 계열을 모두 배제합니다. 따라서 ①이 옳습니다.
+조인 입력 양쪽에 `PX SEND HASH`가 나란히 있다는 사실이 broadcast·partition-wise 계열을 모두 배제합니다. 따라서 ③이 옳습니다.
 
 ### 오답 이유
 
 | 선택지 | 판정 | 이유 |
 |:-:|:-:|---|
-| ① | **○** | Id 5·Id 9가 모두 `PX SEND HASH`로, 처방전·조제내역을 양쪽 다 처방ID 해시로 재분배합니다. 둘 다 대형이라 broadcast 대신 hash-hash를 쓴 상황과 일치합니다 |
+| ① | ✗ | 파티션 와이즈면 조인 입력에 PX SEND가 없어야 합니다. Id 5·Id 9에 `PX SEND HASH`가 있고 두 테이블은 파티셔닝돼 있지도 않으므로 파티션 쌍 로컬 조인이 아닙니다 |
 | ② | ✗ | broadcast-none이면 소형 쪽에 `PX SEND BROADCAST`가 있어야 하는데 플랜에 BROADCAST 노드가 없습니다. 조제내역은 Id 9 `PX SEND HASH`로 재분배됩니다 |
-| ③ | ✗ | 파티션 와이즈면 조인 입력에 PX SEND가 없어야 합니다. Id 5·Id 9에 `PX SEND HASH`가 있고 두 테이블은 파티셔닝돼 있지도 않으므로 파티션 쌍 로컬 조인이 아닙니다 |
+| ③ | **○** | Id 5·Id 9가 모두 `PX SEND HASH`로, 처방전·조제내역을 양쪽 다 처방ID 해시로 재분배합니다. 둘 다 대형이라 broadcast 대신 hash-hash를 쓴 상황과 일치합니다 |
 | ④ | ✗ | hash-broadcast면 한쪽만 `PX SEND HASH`, 다른 쪽은 `PX SEND BROADCAST`여야 합니다. Id 5·Id 9 둘 다 `PX SEND HASH`라 분배 조합을 뒤바꾼 진술입니다 |
 
 ---

@@ -6,7 +6,7 @@
 문제유형: 적절한_것
 보조자료: 없음
 DBMS: 오라클
-정답: 1
+정답: 4
 선택지유형: 서술형
 함정유형: [오라클↔SQLServer_뒤바꿈]
 대상개념: [Multiblock_IO, Single_Block_IO, 대기_이벤트]
@@ -24,16 +24,16 @@ DBMS: 오라클
 
 ### 선택지
 
-① 인덱스를 경유해 얻은 ROWID로 테이블 블록을 하나씩 임의로 찾아 읽는 Single Block I/O가 진행되는 동안에는 `db file sequential read` 대기 이벤트가 관측된다.
+① `db file scattered read`는 이름 그대로 흩어진 블록을 한 번에 하나씩 임의로 읽는 방식에서 발생하며, 주로 인덱스 Range Scan의 테이블 액세스 단계에서 관측된다.
 ② Full Table Scan처럼 인접한 여러 블록을 한 번의 I/O Call로 묶어 읽는 Multiblock I/O 도중에는 `db file sequential read` 대기 이벤트가 나타난다.
 ③ 오라클에서 대량 블록을 훑는 Multiblock I/O에 대응하는 대기 이벤트는 SQL Server가 쓰는 `PAGEIOLATCH_SH`이며, `db file scattered read`는 SQL Server의 Full Scan 대기 이벤트다.
-④ `db file scattered read`는 이름 그대로 흩어진 블록을 한 번에 하나씩 임의로 읽는 방식에서 발생하며, 주로 인덱스 Range Scan의 테이블 액세스 단계에서 관측된다.
+④ 인덱스를 경유해 얻은 ROWID로 테이블 블록을 하나씩 임의로 찾아 읽는 Single Block I/O가 진행되는 동안에는 `db file sequential read` 대기 이벤트가 관측된다.
 
 ---
 
-### 정답 — ①
+### 정답 — ④
 
-### 왜 ①인가
+### 왜 ④인가
 
 I/O 방식과 대기 이벤트의 짝은 이렇게 고정되어 있습니다. **이벤트 이름이 직관과 반대**라 이 짝을 외워 두어야 합니다.
 
@@ -47,18 +47,18 @@ Multiblock I/O    (한 Call에 인접 블록 여러 개)
    → 전형: Full Table Scan, Index Fast Full Scan
 ```
 
-①은 이 짝에 정확히 부합합니다. 인덱스에서 얻은 ROWID로 테이블 블록을 한 건씩 임의로 찾아 읽는 것은 **Single Block I/O**이고, 그동안 관측되는 이벤트가 바로 (이름과 달리) `db file sequential read`입니다.
+④은 이 짝에 정확히 부합합니다. 인덱스에서 얻은 ROWID로 테이블 블록을 한 건씩 임의로 찾아 읽는 것은 **Single Block I/O**이고, 그동안 관측되는 이벤트가 바로 (이름과 달리) `db file sequential read`입니다.
 
-나머지는 이벤트 이름을 반대 방식에 붙였거나(②④), 오라클 이벤트와 SQL Server 이벤트를 **서로 뒤바꿔**(③) 놓았습니다. `PAGEIOLATCH` 계열은 SQL Server의 I/O 대기 이벤트이고, `db file sequential/scattered read`는 오라클 고유의 이벤트입니다.
+나머지는 이벤트 이름을 반대 방식에 붙였거나(②①), 오라클 이벤트와 SQL Server 이벤트를 **서로 뒤바꿔**(③) 놓았습니다. `PAGEIOLATCH` 계열은 SQL Server의 I/O 대기 이벤트이고, `db file sequential/scattered read`는 오라클 고유의 이벤트입니다.
 
 ### 오답 이유
 
 | 선택지 | 판정 | 이유 |
 |:-:|:-:|---|
-| ① | **○** | ROWID로 테이블 블록을 한 건씩 임의로 읽는 것은 Single Block I/O이며, 그때 `db file sequential read`가 관측됩니다. 짝이 정확합니다 |
+| ① | ✗ | `db file scattered read`는 인접 블록을 묶어 읽는 Multiblock I/O(Full Scan)에서 발생합니다. "한 블록씩 임의로 읽는다"는 Single Block I/O의 성질을 잘못 붙인 서술입니다 |
 | ② | ✗ | Multiblock I/O(Full Scan)에서 발생하는 이벤트는 `db file scattered read`입니다. `sequential read`를 붙인 것은 이벤트 이름을 반대 방식에 옮긴 서술입니다 |
 | ③ | ✗ | `PAGEIOLATCH_SH`는 SQL Server의 대기 이벤트이고 `db file scattered read`는 오라클 것입니다. 두 DBMS의 이벤트를 서로 뒤바꿔 놓았습니다 |
-| ④ | ✗ | `db file scattered read`는 인접 블록을 묶어 읽는 Multiblock I/O(Full Scan)에서 발생합니다. "한 블록씩 임의로 읽는다"는 Single Block I/O의 성질을 잘못 붙인 서술입니다 |
+| ④ | **○** | ROWID로 테이블 블록을 한 건씩 임의로 읽는 것은 Single Block I/O이며, 그때 `db file sequential read`가 관측됩니다. 짝이 정확합니다 |
 
 ---
 

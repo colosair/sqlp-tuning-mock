@@ -6,7 +6,7 @@
 문제유형: 직접지목형
 보조자료: 실행계획
 DBMS: 오라클
-정답: 1
+정답: 3
 선택지유형: 서술형
 함정유형: [값스왑]
 대상개념: [PQ_DISTRIBUTE, 병렬_조인, Partition_Wise_Join]
@@ -42,19 +42,19 @@ DBMS: 오라클
 
 ### 선택지
 
-① 두 테이블이 투자자ID로 동일하게 해시 파티셔닝돼 있어, PX PARTITION HASH ALL(Id 7) 아래에서 각 병렬 서버가 대응하는 파티션 쌍만 HASH JOIN(Id 8)한다. 조인 입력 펀드거래·펀드잔고(Id 9·10)는 같은 Q1,00에서 읽히고 그 사이에 PX SEND/RECEIVE가 없어 재분배가 일어나지 않는 파티션 와이즈 조인이며, Id 5의 PX SEND HASH는 조인이 아니라 뒤따르는 펀드유형별 HASH GROUP BY를 위한 재분배다.
+① 소형 펀드잔고를 병렬 서버 전체에 복제(broadcast)하고 대형 펀드거래는 재분배 없이 각 서버가 자기 조각만 스캔하는 broadcast-none 분배다.
 
 ② 두 테이블을 조인 키 투자자ID의 해시로 양쪽 재분배(hash-hash)한 뒤 각 서버가 자기 버킷 범위의 행만 조인하며, 그 재분배가 Id 5 PX SEND HASH이다.
 
-③ 소형 펀드잔고를 병렬 서버 전체에 복제(broadcast)하고 대형 펀드거래는 재분배 없이 각 서버가 자기 조각만 스캔하는 broadcast-none 분배다.
+③ 두 테이블이 투자자ID로 동일하게 해시 파티셔닝돼 있어, PX PARTITION HASH ALL(Id 7) 아래에서 각 병렬 서버가 대응하는 파티션 쌍만 HASH JOIN(Id 8)한다. 조인 입력 펀드거래·펀드잔고(Id 9·10)는 같은 Q1,00에서 읽히고 그 사이에 PX SEND/RECEIVE가 없어 재분배가 일어나지 않는 파티션 와이즈 조인이며, Id 5의 PX SEND HASH는 조인이 아니라 뒤따르는 펀드유형별 HASH GROUP BY를 위한 재분배다.
 
 ④ 대형 펀드거래를 투자자ID 해시로 재분배하고 소형 펀드잔고를 병렬 서버 전체에 복제(broadcast)하는 hash-broadcast 분배다.
 
 ---
 
-### 정답 — ①
+### 정답 — ③
 
-### 왜 ①인가
+### 왜 ③인가
 
 분배 방식은 **조인 노드(Id 8)의 두 입력이 PX SEND를 거치는지**, 그리고 조인을 감싸는 노드가 무엇인지로 읽습니다.
 
@@ -73,13 +73,13 @@ Id 10   TABLE ACCESS FULL 펀드잔고 (Q1,00, 1~32)   조인 입력 — PX SEND
 Id 5 PX SEND HASH  : 펀드유형 집계용 재분배 (조인 아님)
 ```
 
-조인 입력에 SEND가 없다는 사실이 hash-hash·broadcast 계열을 모두 배제합니다. 따라서 ①이 옳습니다.
+조인 입력에 SEND가 없다는 사실이 hash-hash·broadcast 계열을 모두 배제합니다. 따라서 ③이 옳습니다.
 
 나머지 셋은 노드와 분배 방식을 뒤바꾼 값스왑입니다.
 
 ```text
 ② hash-hash     : 조인 입력(Id 9·10)에 PX SEND HASH가 있어야 성립 → 없음. Id 5는 집계용
-③ broadcast-none: PX SEND BROADCAST 노드가 어디에도 없음
+① broadcast-none: PX SEND BROADCAST 노드가 어디에도 없음
 ④ hash-broadcast: PX SEND HASH·PX SEND BROADCAST 둘 다 조인 입력에 없음
 ```
 
@@ -87,9 +87,9 @@ Id 5 PX SEND HASH  : 펀드유형 집계용 재분배 (조인 아님)
 
 | 선택지 | 판정 | 이유 |
 |:-:|:-:|---|
-| ① | **○** | 조인 입력 Id 9·10이 같은 Q1,00·같은 PX PARTITION HASH ALL(Id 7) 아래에서 PX SEND 없이 읽혀 파티션 쌍만 조인합니다. Id 5 PX SEND HASH는 조인이 아니라 펀드유형 HASH GROUP BY 재분배입니다 |
+| ① | ✗ | broadcast-none이면 소형 쪽에 `PX SEND BROADCAST`가 있어야 하는데 플랜에 BROADCAST 노드가 없습니다. 두 입력 모두 파티션 단위 로컬 스캔입니다 |
 | ② | ✗ | hash-hash면 조인 입력 양쪽에 `PX SEND HASH`가 있어야 합니다. Id 9·10엔 SEND가 없고, Id 5의 SEND HASH는 조인 위 집계용이라 조인 재분배로 볼 수 없습니다 |
-| ③ | ✗ | broadcast-none이면 소형 쪽에 `PX SEND BROADCAST`가 있어야 하는데 플랜에 BROADCAST 노드가 없습니다. 두 입력 모두 파티션 단위 로컬 스캔입니다 |
+| ③ | **○** | 조인 입력 Id 9·10이 같은 Q1,00·같은 PX PARTITION HASH ALL(Id 7) 아래에서 PX SEND 없이 읽혀 파티션 쌍만 조인합니다. Id 5 PX SEND HASH는 조인이 아니라 펀드유형 HASH GROUP BY 재분배입니다 |
 | ④ | ✗ | hash-broadcast면 한쪽 `PX SEND HASH`+다른 쪽 `PX SEND BROADCAST`가 조인 입력에 있어야 합니다. Id 9·10엔 어느 SEND도 없어 분배 조합 자체를 뒤바꾼 진술입니다 |
 
 ---

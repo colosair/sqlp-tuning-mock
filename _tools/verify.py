@@ -214,6 +214,29 @@ def main():
         if plan < 2:
             warns.append(f"밀도: 실행계획 {plan}개 (품질 스펙 2~3 미달)")
 
+        # ★ 정답 예측 패턴 가드 — 위치로 정답을 추정할 수 있는 규칙적 배열 차단
+        ans_seq = [int(r["정답"]) for r in sorted(rows, key=lambda r: int(r["번호"]))]
+
+        def _asc_run(s):  # 순환 오름(…4→1…) 최장 연속
+            mx = run = 1
+            for i in range(1, len(s)):
+                run = run + 1 if s[i] == s[i - 1] % 4 + 1 else 1
+                mx = max(mx, run)
+            return mx
+
+        def _same_run(s):
+            mx = run = 1
+            for i in range(1, len(s)):
+                run = run + 1 if s[i] == s[i - 1] else 1
+                mx = max(mx, run)
+            return mx
+
+        asc, same = _asc_run(ans_seq), _same_run(ans_seq)
+        if asc >= 6 or same >= 4:
+            errs.append(f"정답 배열이 예측 가능(순환오름런 {asc}·동일런 {same}) — 위치로 정답 추정 가능. 스크램블 필요: {ans_seq}")
+        elif asc >= 4 or same >= 3:
+            warns.append(f"정답 배열 규칙성(오름런 {asc}·동일런 {same}) — 스크램블 권장")
+
     print(f"\n문항 파일 {len(seen)}/{TOTAL}")
     if warns:
         print(f"\n경보 {len(warns)}건 (실패 아님, 확인):\n" + "\n".join(f"  ~ {w}" for w in warns))
