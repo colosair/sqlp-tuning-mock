@@ -66,6 +66,7 @@ def styles():
     S["gridcap"] = ParagraphStyle("gridcap", fontName="KR-B", fontSize=10.5, leading=15, spaceBefore=2, spaceAfter=4)
     S["gridcell"] = ParagraphStyle("gridcell", fontName="KR", fontSize=9.2, leading=12, alignment=TA_CENTER)
     S["ans_hd"] = ParagraphStyle("ans_hd", fontName="KR-B", fontSize=10.4, leading=15, textColor=DARK, spaceBefore=8, spaceAfter=2.5)
+    S["ans_hd2"] = ParagraphStyle("ans_hd2", fontName="KR-B", fontSize=9.4, leading=13.5, textColor=DARK, leftIndent=6 * mm, spaceBefore=1, spaceAfter=1.5)
     S["why"] = ParagraphStyle("why", fontName="KR", fontSize=9.2, leading=13.6, leftIndent=6 * mm, spaceAfter=2.5)
     S["cell"] = ParagraphStyle("cell", fontName="KR", fontSize=8.6, leading=12)
     S["cellc"] = ParagraphStyle("cellc", fontName="KR-B", fontSize=8.6, leading=12, alignment=TA_CENTER)
@@ -199,11 +200,43 @@ def num_box(n):
     return cell
 
 
-def below_box(code):
+def mono_flowables(codes, gap=2 * mm):
+    """코드블록 리스트 → Preformatted 리스트(블록 사이 여백).
+
+    realign_box는 **블록마다 개별** 적용한다. 합쳐서 정렬하면 파이프 재정렬기가
+    SQL 줄까지 표로 오인한다."""
+    flow = []
+    for i, code in enumerate(codes):
+        if i:
+            flow.append(Spacer(1, gap))
+        flow.append(Preformatted(realign_box(code.strip("\n")), S["mono"], maxLineLength=130))
+    return flow
+
+
+def code_panel(codes, indent=IND):
+    """리본 없는 연회색 mono 패널(발문·선택지 안의 코드블록용)."""
+    if isinstance(codes, str):
+        codes = [codes]
+    inner = Table([[mono_flowables(codes)]], colWidths=[CONTENT - indent])
+    inner.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), LIGHTBG), ("BOX", (0, 0), (-1, -1), 0.5, GRAY),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5)]))
+    outer = Table([["", inner]], colWidths=[indent, CONTENT - indent])
+    outer.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                               ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                               ("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    return outer
+
+
+def below_box(codes):
+    """「아 래」 박스 — 박스 안의 **모든** 코드블록을 리본 하나 아래 쌓는다."""
+    if isinstance(codes, str):
+        codes = [codes]
     ribbon = Table([[Paragraph("아 래", S["boxtitle"])]], colWidths=[20 * mm], rowHeights=[5.4 * mm])
     ribbon.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), DARK), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                                 ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
-    body = Preformatted(realign_box(code.strip("\n")), S["mono"], maxLineLength=130)
+    body = mono_flowables(codes)
     inner = Table([[ribbon], [body]], colWidths=[CONTENT - IND])
     inner.setStyle(TableStyle([
         ("BACKGROUND", (0, 1), (0, 1), LIGHTBG), ("BOX", (0, 0), (-1, -1), 0.5, GRAY),
@@ -244,9 +277,49 @@ def split_sections(body):
     return sections
 
 
-def first_code_block(block):
-    m = re.search(r"```[a-z]*\n(.*?)\n```", block or "", re.S)
-    return m.group(1) if m else None
+FENCE = r"```[a-z]*\n(.*?)\n```"
+
+
+def all_code_blocks(block):
+    """섹션 안의 **모든** 코드블록을 순서대로."""
+    return re.findall(FENCE, block or "", re.S)
+
+
+def split_segments(text):
+    """산문/코드블록을 **원래 순서대로** [("text",…)|("code",…)] 로."""
+    segs = []
+    for p in re.split(r"(```[a-z]*\n.*?\n```)", text or "", flags=re.S):
+        cb = re.match(FENCE, p, re.S)
+        if cb:
+            segs.append(("code", cb.group(1)))
+        elif p.strip():
+            segs.append(("text", p.strip()))
+    return segs
+
+
+def split_options(sel):
+    """선택지 섹션 → [{mark, lead, codes[]}]. 펜스를 인식해 항목 경계를 잡는다."""
+    opts, cur, buf, in_fence = [], None, [], False
+
+    def flush():
+        if cur is not None:
+            body = "\n".join(buf)
+            cur["codes"] = re.findall(FENCE, body, re.S)
+            opts.append(cur)
+
+    for line in (sel or "").split("\n"):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            buf.append(line)
+            continue
+        m = None if in_fence else re.match(r"^([①②③④])\s*(.*)$", line.strip())
+        if m:
+            flush()
+            cur, buf = {"mark": m.group(1), "lead": m.group(2).strip()}, []
+            continue
+        buf.append(line)
+    flush()
+    return opts
 
 
 def parse(path):
@@ -255,12 +328,12 @@ def parse(path):
     body = t[t.find("-->") + 3:]
     sec = split_sections(body)
     q = {"n": int(meta["번호"]), "ans": int(meta["정답"])}
-    # 발문(코드블록 제외한 산문)
-    q["stem"] = re.sub(r"```.*?```", "", sec.get("문제", ""), flags=re.S).strip()
-    # [아 래]
-    q["below"] = first_code_block(sec.get("[아 래]"))
-    # 선택지
-    q["opts"] = re.findall(r"^([①②③④] .+)$", sec.get("선택지", ""), re.M)
+    # 발문 — 산문/코드블록을 순서대로 보존(코드블록을 버리지 않는다)
+    q["stem_parts"] = split_segments(sec.get("문제", ""))
+    # [아 래] — 박스 안의 모든 코드블록
+    q["below"] = all_code_blocks(sec.get("[아 래]"))
+    # 선택지 — lead 문장 + 딸린 코드블록
+    q["opts"] = split_options(sec.get("선택지", ""))
     # 해설
     why_key = next((k for k in sec if k.startswith("왜 ")), None)
     q["why"] = sec.get(why_key, "") if why_key else ""
@@ -273,16 +346,30 @@ def parse(path):
 
 
 def render_question(q):
-    hdr = Table([[num_box(q["n"]), Paragraph(esc(q["stem"]), S["stem"])]], colWidths=[NUMW, CONTENT - NUMW])
+    parts = q["stem_parts"]
+    head_text = parts[0][1] if parts and parts[0][0] == "text" else ""
+    hdr = Table([[num_box(q["n"]), Paragraph(esc(head_text), S["stem"])]], colWidths=[NUMW, CONTENT - NUMW])
     hdr.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (0, 0), 0),
                              ("RIGHTPADDING", (0, 0), (0, 0), 3 * mm), ("LEFTPADDING", (1, 0), (1, 0), 0),
                              ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
     flow = [hdr, Spacer(1, 2 * mm)]
+    # 발문에 이어지는 코드블록·산문(순서 유지)
+    for kind, body in parts[1:] if head_text else parts:
+        if kind == "code":
+            flow += [code_panel(body), Spacer(1, 2 * mm)]
+        else:
+            flow += [Paragraph(esc(body), S["stem"]), Spacer(1, 2 * mm)]
     if q["below"]:
         flow += [below_box(q["below"]), Spacer(1, 2 * mm)]
+    opt_has_code = False
     for o in q["opts"]:
-        flow.append(Paragraph(esc_plain(o), S["opt"]))  # 보기는 볼드 없이
-    return [KeepTogether(flow), Spacer(1, 4.5 * mm)]
+        flow.append(Paragraph(esc_plain(f"{o['mark']} {o['lead']}".strip()), S["opt"]))  # 보기는 볼드 없이
+        if o["codes"]:
+            opt_has_code = True
+            flow += [Spacer(1, 1 * mm), code_panel(o["codes"], indent=IND + OPT_HANG), Spacer(1, 1.5 * mm)]
+    # 선택지에 코드가 붙으면 분량이 커서 통째로 묶으면 페이지가 밀린다 → 자연 분할 허용
+    return ([*flow, Spacer(1, 4.5 * mm)] if opt_has_code
+            else [KeepTogether(flow), Spacer(1, 4.5 * mm)])
 
 
 def answer_grid(qs):
@@ -348,6 +435,12 @@ def render_answer(q):
     if q["oab"]:
         flow.append(Spacer(1, 1 * mm))
         flow.append(render_oab(q["oab"], q["ans"]))
+    # ✅ 이 문제의 핵심 (섹션이 파일 끝까지라 '📌 한 줄 정리' 줄은 빼고 렌더 — 아래에서 따로 출력)
+    key = "\n".join(l for l in q["key"].split("\n") if not l.lstrip().startswith("📌"))
+    if key.strip():
+        flow.append(Spacer(1, 1.5 * mm))
+        flow.append(Paragraph("<b>▪ 이 문제의 핵심</b>", S["ans_hd2"]))
+        flow += render_why(key)
     if q["oneline"]:
         flow.append(Spacer(1, 1.2 * mm))
         flow.append(Paragraph(f"<b>▪ 한 줄 정리</b> &nbsp;{esc(q['oneline'])}", S["why"]))
