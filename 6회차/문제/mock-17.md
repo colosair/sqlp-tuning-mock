@@ -72,7 +72,7 @@ Id 10   TABLE ACCESS FULL 통행내역 (Q1,00)            재분배 없이 로�
 ```text
 ④ REPLICATE : 요금소 = SEND 없음(각 서버 자체 Full Scan), 통행내역 = BLOCK ITERATOR 로컬 스캔  → Id 8·Id 10과 일치   ✔
 ① 역할 뒤바꿈 : 통행내역=REPLICATE, 요금소=BLOCK ITERATOR                                     → Id 8·Id 9와 반대(값 스왑)
-② broadcast  : 요금소 위에 PX SEND BROADCAST                                                → 요금소(Id 8) 위엔 SEND 자체가 없음
+② broadcast  : 요금소 위에 PX SEND BROADCAST                                       → 요금소(Id 8) 위엔 SEND 자체가 없음
 ③ hash-hash  : 양쪽 조인 입력 위에 PX SEND HASH                                 → Id 5 SEND HASH는 조인이 아닌 GROUP BY용
 ```
 

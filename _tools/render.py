@@ -92,8 +92,10 @@ def esc_plain(t):
 
 
 def _dw(s):
-    """디스플레이 폭. 굴림체 고정폭에서 동아시아 폭(W/F) 문자는 정확히 2배."""
-    return sum(2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1 for ch in s)
+    """디스플레이 폭(ASCII=1). 굴림체는 W/F뿐 아니라 **Ambiguous(A)** 문자
+    (`→ ← · ≠ ① │ ▼` 등)도 2배폭으로 그린다 — 실측으로 확인했다.
+    A를 1로 세면 그 문자가 든 표의 열이 어긋난다."""
+    return sum(2 if unicodedata.east_asian_width(ch) in ("W", "F", "A") else 1 for ch in s)
 
 
 def _is_div(s):
@@ -200,16 +202,34 @@ def num_box(n):
     return cell
 
 
-def mono_flowables(codes, gap=2 * mm):
+def fit_mono(code, avail):
+    """가용 폭에 맞는 mono 스타일을 고른다.
+
+    긴 줄을 접으면 실행계획·표의 열이 깨지므로, **폰트를 조금 줄여** 통째로
+    들어가게 한다(굴림체는 ASCII 1칸 = fontSize/2). 6pt 아래로는 안 줄인다."""
+    widest = max((_dw(l) for l in code.split("\n")), default=0)
+    if widest == 0:
+        return S["mono"]
+    size = min(S["mono"].fontSize, 2 * avail / widest)
+    if size >= S["mono"].fontSize - 0.05:
+        return S["mono"]
+    size = max(size, 6.0)
+    return ParagraphStyle("mono_fit", parent=S["mono"], fontSize=size,
+                          leading=size * S["mono"].leading / S["mono"].fontSize)
+
+
+def mono_flowables(codes, gap=2 * mm, avail=None):
     """코드블록 리스트 → Preformatted 리스트(블록 사이 여백).
 
     realign_box는 **블록마다 개별** 적용한다. 합쳐서 정렬하면 파이프 재정렬기가
     SQL 줄까지 표로 오인한다."""
+    avail = CONTENT if avail is None else avail
     flow = []
     for i, code in enumerate(codes):
         if i:
             flow.append(Spacer(1, gap))
-        flow.append(Preformatted(realign_box(code.strip("\n")), S["mono"], maxLineLength=130))
+        body = realign_box(code.strip("\n"))
+        flow.append(Preformatted(body, fit_mono(body, avail), maxLineLength=400))
     return flow
 
 
@@ -217,7 +237,7 @@ def code_panel(codes, indent=IND):
     """리본 없는 연회색 mono 패널(발문·선택지 안의 코드블록용)."""
     if isinstance(codes, str):
         codes = [codes]
-    inner = Table([[mono_flowables(codes)]], colWidths=[CONTENT - indent])
+    inner = Table([[mono_flowables(codes, avail=CONTENT - indent - 14)]], colWidths=[CONTENT - indent])
     inner.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), LIGHTBG), ("BOX", (0, 0), (-1, -1), 0.5, GRAY),
         ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 6),
@@ -236,7 +256,7 @@ def below_box(codes):
     ribbon = Table([[Paragraph("아 래", S["boxtitle"])]], colWidths=[20 * mm], rowHeights=[5.4 * mm])
     ribbon.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), DARK), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                                 ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
-    body = mono_flowables(codes)
+    body = mono_flowables(codes, avail=CONTENT - IND - 14)
     inner = Table([[ribbon], [body]], colWidths=[CONTENT - IND])
     inner.setStyle(TableStyle([
         ("BACKGROUND", (0, 1), (0, 1), LIGHTBG), ("BOX", (0, 0), (-1, -1), 0.5, GRAY),
@@ -399,7 +419,7 @@ def render_why(why):
             continue
         cb = re.match(r"```[a-z]*\n(.*?)\n```", p, re.S)
         if cb:
-            flow.append(Preformatted(realign_box(cb.group(1)), S["mono"], maxLineLength=130))
+            flow += mono_flowables([cb.group(1)], avail=CONTENT)
             flow.append(Spacer(1, 1.5 * mm))
         else:
             for line in p.split("\n"):
