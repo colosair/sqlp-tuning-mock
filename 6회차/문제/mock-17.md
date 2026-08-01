@@ -42,13 +42,13 @@ DBMS: 오라클
 
 ### 선택지
 
-① 통행내역(큰 테이블)이 각 병렬 서버에 통째로 REPLICATE(복제)되고, 요금소는 Id 9 `PX BLOCK ITERATOR`로 블록 범위를 나눠 병렬 스캔된다.
+① 통행내역(2억 4천만 건)이 각 병렬 서버에 통째로 REPLICATE(복제)되어 Id 10에서 서버마다 전량이 읽히고, 요금소(1,500건)는 Id 9 `PX BLOCK ITERATOR`로 블록 범위를 나눠 병렬 스캔된다. 조인(Id 7)은 이렇게 갖춰진 두 입력으로 슬레이브 안에서 수행되고, Id 5 `PX SEND HASH`는 그 조인 결과를 상위로 넘기는 경로다.
 
-② 요금소를 한 병렬 서버가 읽어 `PX SEND BROADCAST`로 전 서버에 뿌리고 통행내역은 재분배 없이 읽는 broadcast 방식이다.
+② 한 병렬 서버가 요금소 1,500건을 읽어 Id 8 위의 `PX SEND BROADCAST`로 전 서버에 뿌리고, 통행내역은 Id 9 `PX BLOCK ITERATOR`로 재분배 없이 읽는 broadcast 방식이다. Id 5 `PX SEND HASH`의 :TQ10000이 그 브로드캐스트 경로이며, 큰 통행내역은 네트워크로 흐르지 않는다.
 
-③ 요금소와 통행내역을 양쪽 다 요금소코드 해시로 재분배하는 hash-hash 방식이며, Id 5 `PX SEND HASH`가 그 재분배의 증거다.
+③ 요금소와 통행내역을 양쪽 다 요금소코드 해시로 재분배하는 hash-hash 방식이며, Id 5 `PX SEND HASH`가 :TQ10000으로 그 재분배를 수행하고 Id 4 `PX RECEIVE`가 Q1,01에서 받아 짝을 맞추므로, 두 테이블의 같은 요금소코드가 같은 슬레이브로 모인 뒤 Id 7에서 조인된다.
 
-④ 요금소는 재분배도 브로드캐스트도 없이 각 병렬 서버가 자체적으로 전체를 Full Scan(Id 8, 위에 `PX SEND` 없음)하는 REPLICATE 방식이고, 통행내역은 각 서버가 Id 9 `PX BLOCK ITERATOR`로 자기 블록 범위만 병렬 스캔(Id 10)하며, 조인은 슬레이브 안에서 재분배 없이 수행된다. Id 5 `PX SEND HASH`는 조인이 아니라 상위 HASH GROUP BY 재분배용이다.
+④ 요금소는 재분배도 브로드캐스트도 없이 각 병렬 서버가 자체적으로 전체를 Full Scan(Id 8)하는 REPLICATE 방식이고, 통행내역은 각 서버가 Id 9 `PX BLOCK ITERATOR`로 자기 블록 범위만 병렬 스캔(Id 10)한다. 조인은 재분배 없이 슬레이브 안에서 수행되며, Id 5 `PX SEND HASH`는 상위 HASH GROUP BY 재분배용이다.
 
 ---
 
@@ -82,9 +82,9 @@ Id 10   TABLE ACCESS FULL 통행내역 (Q1,00)            재분배 없이 로�
 
 | 선택지 | 판정 | 이유 |
 |:-:|:-:|---|
-| ① | ✗ | REPLICATE되는 쪽과 블록 분할로 읽는 쪽을 뒤바꿨습니다. 각 서버가 통째로 읽는 것은 1,500건짜리 요금소(Id 8)이고, Id 9 `PX BLOCK ITERATOR`로 블록 범위를 나눠 읽는 것은 통행내역(Id 10)입니다. 2억 4천만 건을 서버마다 복제하지 않습니다 |
-| ② | ✗ | broadcast라면 요금소 위에 `PX SEND BROADCAST`가 있어야 하는데, Id 8 요금소 위에는 `PX SEND`가 없습니다. 한 서버가 읽어 뿌리는 것이 아니라 각 서버가 스스로 읽는 REPLICATE입니다 |
-| ③ | ✗ | hash-hash라면 두 조인 입력 위에 각각 `PX SEND HASH`가 있어야 합니다. Id 8·Id 10 위에는 송신이 없고, Id 5 `PX SEND HASH`는 조인 입력이 아니라 상위 HASH GROUP BY의 집계 키 재분배용입니다 |
+| ① | ✗ | REPLICATE되는 쪽과 블록 분할로 읽는 쪽을 뒤바꿨습니다. Id 9 `PX BLOCK ITERATOR`는 Id 10 통행내역 바로 위에 붙어 있으므로 블록 범위로 나뉘는 쪽이 통행내역이고, 서버마다 통째로 읽히는 쪽은 Id 8 요금소 1,500건입니다. 2억 4천만 건을 서버마다 복제하지는 않습니다 |
+| ② | ✗ | broadcast라면 요금소 위에 `PX SEND BROADCAST`가 있어야 하는데, Id 8 요금소 위에는 `PX SEND`가 없습니다. Id 5 `PX SEND HASH`는 :TQ10000을 Q1,00에서 Q1,01로 보내는 상위 경로라 요금소를 뿌리는 통로가 될 수 없고, 각 서버가 스스로 읽는 REPLICATE입니다 |
+| ③ | ✗ | hash-hash라면 두 조인 입력 Id 8·Id 10 위에 각각 `PX SEND HASH`가 있어야 하는데 거기엔 송신이 없습니다. Id 5 `PX SEND HASH`와 Id 4 `PX RECEIVE`는 조인(Id 7)보다 위, Id 6 부분집계와 Id 3 최종집계 사이에 있어 GROUP BY 재분배용입니다 |
 | ④ | **○** | 요금소는 위에 `PX SEND`가 없어 각 서버가 자체 Full Scan하는 REPLICATE(Id 8), 통행내역은 `PX BLOCK ITERATOR`로 블록 범위 로컬 스캔(Id 10), 조인은 재분배 없이 슬레이브 안에서 수행 — Id 5 SEND HASH는 GROUP BY용이라는 지목이 플랜과 일치합니다 |
 
 ---

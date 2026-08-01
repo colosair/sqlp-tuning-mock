@@ -44,13 +44,13 @@ device 최대 조회 대상         distinct dev_id = 40 종
 
 ### 선택지
 
-① Fetch Call이 3,001회이므로 ArraySize는 약 50이며, ArraySize를 키우면 device 조회 횟수가 줄어 스칼라 서브쿼리 캐싱 효과가 커진다.
+① 반환 행 수 1,500,000과 Fetch Call 3,001회를 놓고 보면 ArraySize는 약 50이며, ArraySize를 키울수록 한 번에 실리는 행이 늘어 device 조회 횟수까지 함께 줄어들므로 스칼라 서브쿼리 캐싱 효과가 커진다.
 
-② 스칼라 서브쿼리 캐싱이 Fetch Call 횟수를 3,001회에서 줄여 네트워크 왕복을 감소시키고, ArraySize를 조정하면 device 조회가 40회 수준으로 줄어든다.
+② 스칼라 서브쿼리 캐싱이 Fetch Call 횟수를 3,001회보다 적게 묶어 클라이언트–서버 네트워크 왕복을 감소시키고, ArraySize를 조정하면 dev_id가 distinct 40종뿐이므로 device 조회가 150만 회에서 40회 수준으로 줄어든다.
 
 ③ ArraySize는 1,500,000 ÷ (3,001 − 1) = 500이며, ArraySize를 더 키우면 Fetch Call(User Call) 횟수가 줄어 왕복이 감소한다. 한편 스칼라 서브쿼리 캐싱은 dev_id가 40종뿐이라 device 조회를 최대 40회 수준으로 줄인다.
 
-④ ArraySize와 무관하게 Fetch Call은 반환 행 수와 항상 같으므로, 왕복을 줄이려면 스칼라 서브쿼리 캐싱만이 유효하다.
+④ Fetch Call 횟수는 ArraySize와 무관하게 반환 행 수에 따라 정해지므로 150만 행이면 왕복도 그만큼 발생하고 3,001이라는 수치는 Call 자체를 줄이지 못한 흔적이며, 왕복을 줄이려면 dev_id 40종에 걸리는 스칼라 서브쿼리 캐싱만이 유효하다.
 
 ---
 
@@ -83,10 +83,10 @@ device 최대 조회 대상         distinct dev_id = 40 종
 
 | 선택지 | 판정 | 이유 |
 |:-:|:-:|---|
-| ① | ✗ | ArraySize는 50이 아니라 1,500,000 ÷ 3,000 = 500입니다. 또 ArraySize를 키우는 것은 Fetch 왕복을 줄일 뿐, device 조회를 줄이는 것은 스칼라 캐싱의 몫입니다 |
-| ② | ✗ | 두 효과를 통째로 뒤바꿨습니다. Fetch Call을 줄이는 것은 Array Processing이고, device 조회를 40회로 줄이는 것은 스칼라 서브쿼리 캐싱입니다 |
+| ① | ✗ | ArraySize는 50이 아니라 1,500,000 ÷ 3,000 = 500입니다. 50이었다면 Fetch Call이 30,001회로 찍혔어야 합니다. 또 ArraySize를 키우는 것은 Fetch 왕복을 줄일 뿐, device 조회를 줄이는 것은 스칼라 캐싱의 몫입니다 |
+| ② | ✗ | 3,001회·distinct 40종·150만 행이라는 수치는 자료 그대로지만 두 효과를 통째로 뒤바꿨습니다. Fetch Call을 줄이는 것은 Array Processing이고, device 조회를 40회로 줄이는 것은 스칼라 서브쿼리 캐싱입니다 |
 | ③ | **○** | ArraySize = 1,500,000 ÷ (3,001−1) = 500이 맞고, ArraySize↑는 Fetch(User Call) 왕복을, 스칼라 캐싱은 device 조회를 40종 수준으로 줄인다는 효과 구분이 정확합니다 |
-| ④ | ✗ | Fetch Call은 반환 행 수와 같지 않습니다. ArraySize 500 덕에 150만 행이 3,001회로 묶였습니다. ArraySize를 키우면 왕복은 더 줄어듭니다 |
+| ④ | ✗ | Fetch Call은 반환 행 수에 따라 정해지지 않습니다. 행 수를 따랐다면 1,500,000회여야 하는데 실제는 3,001회 — ArraySize 500이 500행씩 묶은 결과이고, 3,001은 Call을 줄이지 못한 흔적이 아니라 이미 500배로 줄인 결과입니다. ArraySize를 더 키우면 왕복은 더 줄어듭니다 |
 
 ---
 

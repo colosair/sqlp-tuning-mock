@@ -41,13 +41,13 @@ DBMS: 오라클
 
 ### 선택지
 
-① 노출이력과 캠페인을 양쪽 다 조인 키 해시로 재분배(hash-hash)하여, 각 서버가 자기 해시 버킷 범위의 양쪽 행만 조인한다.
+① :TQ10000과 :TQ10001 두 테이블 큐가 노출이력과 캠페인을 양쪽 다 조인 키 해시로 재분배(hash-hash)하여, 각 서버가 Id 3 HASH JOIN에서 자기 해시 버킷 범위의 양쪽 행만 조인한다.
 
 ② 캠페인(소형)을 병렬 서버 전체에 복제(broadcast)하고, 노출이력(대형)은 재분배 없이 각 서버가 PX BLOCK ITERATOR로 자기 파티션 조각만 스캔한다(broadcast-none).
 
-③ 노출이력을 조인 키 해시로 재분배하고, 캠페인을 병렬 서버 전체에 복제한다(hash-broadcast).
+③ 노출이력(Id 9)은 Pstart 1~Pstop 8 파티션을 읽은 뒤 조인 키 해시로 Q1,01에 재분배되고, 캠페인(Id 7)은 Id 5에서 병렬 서버 전체에 복제된다(hash-broadcast).
 
-④ 노출이력(대형)을 병렬 서버 전체에 복제(broadcast)하고, 캠페인(소형)은 각 서버가 자기 조각만 스캔한다.
+④ 노출이력(대형, 3억 건)을 Id 5의 PX SEND BROADCAST로 병렬 서버 전체에 복제하고, 캠페인(소형, 5천 건)은 Id 6 PX BLOCK ITERATOR로 각 서버가 자기 조각만 스캔한다.
 
 ---
 
@@ -73,19 +73,19 @@ Id 9  TABLE ACCESS FULL  노출이력 (Q1,01, Pstart 1~8) → PX SEND 없음
 
 ```text
 실제:  캠페인 = BROADCAST,  노출이력 = 재분배없음(로컬 스캔)   (② broadcast-none)   ✔
-① hash-hash     : 캠페인 = HASH,      노출이력 = HASH       → SEND BROADCAST·SEND 부재와 불일치
+① hash-hash     : 캠페인 = HASH,      노출이력 = HASH       → :TQ10001은 QC로 보내는 P->S, SEND HASH 없음
 ③ hash-broadcast: 노출이력 = HASH,    캠페인 = BROADCAST     → 노출이력에 SEND HASH 없음
-④ none-broadcast: 노출이력 = BROADCAST, 캠페인 = 로컬 스캔    → BROADCAST가 캠페인 쪽(Id 5)이라 대소를 뒤바꿈
+④ none-broadcast: 캠페인 = 로컬 스캔,  노출이력 = BROADCAST → BROADCAST가 캠페인 쪽(Id 5)이라 대소를 뒤바꿈
 ```
 
 ### 오답 이유
 
 | 선택지 | 판정 | 이유 |
 |:-:|:-:|---|
-| ① | ✗ | `PX SEND HASH`가 어디에도 없습니다. 캠페인 쪽은 SEND BROADCAST(Id 5)이고 노출이력 쪽은 PX SEND 자체가 없어 hash-hash가 아닙니다 |
+| ① | ✗ | `PX SEND HASH`가 어디에도 없습니다. :TQ10000의 송신은 SEND BROADCAST(Id 5)이고 :TQ10001(Id 2)은 결과를 QC로 넘기는 `PX SEND QC (RANDOM)`·P->S입니다. 노출이력 쪽엔 PX SEND 자체가 없어 hash-hash가 아닙니다 |
 | ② | **○** | Id 5가 `PX SEND BROADCAST`(캠페인)이고, 노출이력은 조인과 같은 Q1,01 아래 Id 8 PX BLOCK ITERATOR로 SEND 없이 로컬 스캔됩니다. 소형만 복제하는 broadcast-none 분배입니다 |
-| ③ | ✗ | 노출이력 쪽에 `PX SEND HASH`가 없고 재분배 노드도 없습니다. 노출이력은 Q1,01에서 로컬 스캔되므로 해시 재분배가 아닙니다 |
-| ④ | ✗ | BROADCAST 노드는 캠페인 쪽 Id 5입니다. 노출이력은 복제되지 않고 로컬 스캔되므로, 대형·소형의 역할을 뒤바꾼 진술입니다 |
+| ③ | ✗ | 노출이력이 Pstart 1~Pstop 8을 읽는 것은 맞지만 그 위에 `PX SEND HASH`도 PX RECEIVE도 없습니다. Id 8·Id 9는 조인(Id 3)과 같은 Q1,01에서 로컬 스캔되므로 해시 재분배가 아닙니다 |
+| ④ | ✗ | Id 5 `PX SEND BROADCAST` 아래에 있는 것은 Id 7 캠페인입니다. Id 6이 캠페인을 읽는 것까지는 맞지만 그 결과가 Id 5에서 전체 복제되고, 3억 건 노출이력은 복제 없이 Id 8에서 로컬 스캔되므로 대형·소형의 역할을 뒤바꾼 진술입니다 |
 
 ---
 

@@ -43,13 +43,13 @@ DBMS: 오라클
 
 ### 선택지
 
-① 두 테이블이 처방ID로 동일하게 파티셔닝돼 있어, 각 서버가 대응 파티션 쌍만 PX SEND 없이 조인하는 파티션 와이즈 조인이다.
+① 처방전 2억 2천만 건과 조제내역 8,900만 건이 처방ID로 동일하게 파티셔닝돼 있어, Id 6·Id 10의 `PX BLOCK ITERATOR`가 각 서버에 대응 파티션 쌍을 하나씩 맡기고 Id 3 `HASH JOIN`이 서버 간 전송 없이 각자 로컬에서 끝내는 파티션 와이즈(partition-wise) 조인이다.
 
-② 소형 조제내역을 병렬 서버 전체에 복제(broadcast)하고, 대형 처방전은 재분배 없이 각 서버가 자기 조각만 스캔하는 broadcast-none 분배다.
+② 작은 쪽인 조제내역 8,900만 건을 Id 9에서 병렬 서버 전체에 복제(broadcast)해 Q1,02의 각 서버가 사본을 갖게 하고, 큰 쪽인 처방전은 Id 6 `PX BLOCK ITERATOR`로 자기 조각만 스캔해 재분배 없이 Id 3 `HASH JOIN`에서 맞물리는 broadcast-none 분배다.
 
 ③ 처방전과 조제내역을 **양쪽 다 조인 키(처방ID) 해시로 재분배**한다(hash-hash). 두 테이블 모두 대형이라 소형을 전체 복제하는 broadcast는 각 서버에 큰 테이블을 통째로 반복 복제해 비용이 과다하므로, 각 입력을 PX SEND HASH로 한 번씩만 재분배해 같은 해시 버킷끼리 조인한다.
 
-④ 대형 처방전을 처방ID 해시로 재분배하고, 소형 조제내역을 병렬 서버 전체에 복제(broadcast)하는 hash-broadcast 분배다.
+④ 큰 쪽인 처방전을 Id 5 `PX SEND HASH :TQ10000`으로 처방ID 해시 재분배하고, 작은 쪽인 조제내역은 Id 9에서 병렬 서버 전체에 복제(broadcast)해 Id 8 `PX RECEIVE`가 사본을 받는 hash-broadcast 분배다. TQ가 :TQ10000과 :TQ10001로 갈린 것이 두 입력의 분배 방식이 서로 다르다는 표시다.
 
 ---
 
@@ -85,10 +85,10 @@ Id 3  HASH JOIN (Q1,02) ← Id 4·Id 8 PX RECEIVE로 양쪽을 받아 조인
 
 | 선택지 | 판정 | 이유 |
 |:-:|:-:|---|
-| ① | ✗ | 파티션 와이즈면 조인 입력에 PX SEND가 없어야 합니다. Id 5·Id 9에 `PX SEND HASH`가 있고 두 테이블은 파티셔닝돼 있지도 않으므로 파티션 쌍 로컬 조인이 아닙니다 |
-| ② | ✗ | broadcast-none이면 소형 쪽에 `PX SEND BROADCAST`가 있어야 하는데 플랜에 BROADCAST 노드가 없습니다. 조제내역은 Id 9 `PX SEND HASH`로 재분배됩니다 |
+| ① | ✗ | 파티션 와이즈면 조인 입력에 PX SEND가 없어야 하는데 Id 5·Id 9에 `PX SEND HASH`가 있고, TQ도 Q1,00·Q1,01에서 Q1,02로 갈아탑니다. 발문상 두 테이블은 파티셔닝돼 있지도 않으므로 파티션 쌍 로컬 조인이 아닙니다 |
+| ② | ✗ | broadcast-none이면 소형 쪽에 `PX SEND BROADCAST`가 있고 대형 쪽에는 SEND가 없어야 하는데, 플랜에 BROADCAST 노드가 없고 처방전도 Id 5 `PX SEND HASH`로 재분배됩니다. 조제내역 역시 Id 9 `PX SEND HASH`입니다 |
 | ③ | **○** | Id 5·Id 9가 모두 `PX SEND HASH`로, 처방전·조제내역을 양쪽 다 처방ID 해시로 재분배합니다. 둘 다 대형이라 broadcast 대신 hash-hash를 쓴 상황과 일치합니다 |
-| ④ | ✗ | hash-broadcast면 한쪽만 `PX SEND HASH`, 다른 쪽은 `PX SEND BROADCAST`여야 합니다. Id 5·Id 9 둘 다 `PX SEND HASH`라 분배 조합을 뒤바꾼 진술입니다 |
+| ④ | ✗ | hash-broadcast면 한쪽만 `PX SEND HASH`, 다른 쪽은 `PX SEND BROADCAST`여야 합니다. Id 5·Id 9 둘 다 `PX SEND HASH`이고, TQ가 :TQ10000·:TQ10001로 갈린 것은 생산자 집합이 둘이라는 뜻일 뿐이라 분배 조합을 뒤바꾼 진술입니다 |
 
 ---
 

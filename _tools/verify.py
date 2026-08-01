@@ -8,6 +8,7 @@
 
 import re
 import sys
+import unicodedata
 from collections import Counter
 from pathlib import Path
 
@@ -47,6 +48,33 @@ def 통제어휘():
     return {m.group(1) for m in re.finditer(r"^\| `([^`]+)` \|", t, re.M)}
 
 
+def _dw(s):
+    """디스플레이 폭. 굴림체는 W/F뿐 아니라 Ambiguous(A: → · ≠ ① 등)도 2배폭으로
+    그린다(render.py `_dw()`와 같은 규칙 — 폰트 실측으로 확인)."""
+    return sum(2 if unicodedata.east_asian_width(c) in ("W", "F", "A") else 1 for c in s)
+
+
+def 선택지폭(t):
+    """선택지 4개의 표시 폭. 코드블록이 딸린 보기(역공학)는 코드까지 합산."""
+    sec = t[t.find("### 선택지"):t.find("### 정답") if "### 정답" in t else len(t)]
+    opts, cur, buf, fence = [], None, [], False
+    for line in sec.split("\n"):
+        if line.lstrip().startswith("```"):
+            fence = not fence
+            buf.append(line)
+            continue
+        m = None if fence else re.match(r"^([①②③④])\s*(.*)$", line.strip())
+        if m:
+            if cur is not None:
+                opts.append(cur + sum(_dw(c) for c in re.findall(r"```[a-z]*\n(.*?)\n```", "\n".join(buf), re.S)))
+            cur, buf = _dw(re.sub(r"[*`]", "", m.group(2))), []
+            continue
+        buf.append(line)
+    if cur is not None:
+        opts.append(cur + sum(_dw(c) for c in re.findall(r"```[a-z]*\n(.*?)\n```", "\n".join(buf), re.S)))
+    return opts
+
+
 def 메타(t):
     m = re.search(r"<!--meta\n(.*?)\n-->", t, re.S)
     return dict(re.findall(r"^(\w+): (.+)$", m.group(1), re.M)) if m else None
@@ -71,6 +99,7 @@ def main():
     errs, warns = [], []
     seen = {}
     rows = []
+    길이통계 = []
 
     for f in sorted(문제_DIR.glob("mock-*.md")):
         t = f.read_text(encoding="utf-8")
@@ -117,6 +146,22 @@ def main():
         sel = re.findall(r"^([①②③④]) ", t[t.find("### 선택지"):t.find("### 정답") if "### 정답" in t else len(t)], re.M)
         if sel != ["①", "②", "③", "④"]:
             errs.append(f"{n}번: 선택지가 ①②③④ 4개가 아님 ({sel})")
+
+        # ★ 선택지 길이 편향 — '가장 긴 보기 = 정답'이면 자료를 안 보고도 찍힌다
+        W = 선택지폭(t)
+        if len(W) == 4 and sum(W):
+            avg = sum(W) / 4
+            ratio = W[ans - 1] / avg
+            # 동률 최장은 단서가 아니다 — 다른 보기도 같은 폭이면 '가장 긴 것'을
+            # 고르는 전략이 정답을 집어내지 못한다. 단독 최장일 때만 계상한다.
+            longest = W[ans - 1] == max(W) and W.count(max(W)) == 1
+            길이통계.append((n, longest, ratio, W[ans - 1]))
+            if longest and ratio > 1.25:
+                errs.append(f"{n}번: 정답이 최장이며 평균의 {ratio:.2f}배 "
+                            f"({W[ans-1]}폭 vs 나머지 {[w for i,w in enumerate(W) if i!=ans-1]}) "
+                            "— 길이만 보고 찍히므로 오답을 같은 밀도로 보강할 것")
+            elif W[ans - 1] > 300:
+                warns.append(f"{n}번: 정답 보기 {W[ans-1]}폭 — 근거 일부를 해설로 옮기는 편이 낫습니다")
 
         # 오답 이유 표
         tbl = re.findall(r"^\| ([①②③④]) \| (\S+) \|", t, re.M)
@@ -213,6 +258,14 @@ def main():
             warns.append(f"밀도: TKPROF 트레이스 {tk}개 (품질 스펙 3~4 미달)")
         if plan < 2:
             warns.append(f"밀도: 실행계획 {plan}개 (품질 스펙 2~3 미달)")
+
+        # ★ 회차 게이트 — 문항 게이트만으로는 "전부 1.05배로 최장"인 패턴을 못 막는다.
+        #    '가장 긴 보기 = 정답'이 우연(25%=5문항)을 크게 넘으면 세트 전체가 찍힌다.
+        lg = sum(1 for _, longest, _, _ in 길이통계 if longest)
+        print(f"  최장=정답: {lg}/{len(길이통계)} (한도 8)")
+        if lg > 8:
+            errs.append(f"길이 편향: '가장 긴 보기 = 정답'이 {lg}/{TOTAL}문항 (한도 8) "
+                        "— 자료를 읽지 않고 최장 보기만 골라도 맞는 세트가 됨")
 
         # ★ 정답 예측 패턴 가드 — 위치로 정답을 추정할 수 있는 규칙적 배열 차단
         ans_seq = [int(r["정답"]) for r in sorted(rows, key=lambda r: int(r["번호"]))]

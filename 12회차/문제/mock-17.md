@@ -49,13 +49,13 @@ DBMS: 오라클
 
 ### 선택지
 
-① 업체코드 조인(Id 7)은 조인 키의 해시로 공급업체와 납품이행실적을 양쪽 재분배하는 hash-hash이고, 품목코드 조인(Id 4)은 소형 조달품목을 복제하는 broadcast 분배다.
+① 업체코드 조인(Id 7)은 두 입력이 :TQ10000과 Q1,02 흐름을 타고 올라와 조인 키 해시로 공급업체(Id 11)와 납품이행실적(Id 13)을 양쪽 재분배하는 hash-hash이고, 품목코드 조인(Id 4)은 약 90만 건뿐인 소형 조달품목(Id 17)을 Id 15에서 전 서버로 복제해 붙이는 broadcast 분배다.
 
-② 업체코드 조인(Id 7)에서 대형 납품이행실적(Id 13)을 `PX SEND BROADCAST`(Id 9)로 전 서버에 복제하고, 소형 공급업체(Id 11)는 자기 블록 범위만 읽어 조인하는 broadcast 분배다.
+② 업체코드 조인(Id 7)에서 :TQ10000을 타는 `PX SEND BROADCAST`(Id 9)가 대형 납품이행실적(Id 13)을 전 서버에 복제하고, 약 5,200건뿐인 소형 공급업체(Id 11)는 `PX BLOCK ITERATOR`(Id 10)로 자기 블록 범위만 읽어 로컬에서 조인하는 broadcast 분배다. 큰 쪽을 뿌려야 각 서버가 작은 쪽 전량과 맞붙는다.
 
 ③ 업체코드 조인(Id 7)은 소형 공급업체(Id 11)를 `PX SEND BROADCAST`(Id 9)로 복제하고 납품이행실적(Id 13)은 재분배 없이 로컬로 읽는 broadcast이며, 품목코드 조인(Id 4)은 그 결과(Id 6)와 조달품목(Id 15)을 양쪽 `PX SEND HASH`로 재분배하는 hash-hash 분배다.
 
-④ 두 조인이 다 broadcast 분배이며, 품목코드 조인(Id 4)에서도 조달품목이 Id 15에서 `PX SEND BROADCAST`로 복제된 뒤 로컬로 조인된다.
+④ 업체코드 조인(Id 7)이 소형 공급업체(Id 11)를 `PX SEND BROADCAST`(Id 9)로 복제하는 broadcast인 것처럼, 품목코드 조인(Id 4)에서도 약 90만 건인 조달품목(Id 17)이 Id 15에서 `PX SEND BROADCAST`로 전 서버에 복제된 뒤 Id 6으로 올라온 결과와 로컬로 조인된다. 두 조인이 다 broadcast 분배다.
 
 ---
 
@@ -96,10 +96,10 @@ Id 15 PX SEND HASH :TQ10001 (Q1,01 → Q1,03)   조달품목을 품목코드 해
 
 | 선택지 | 판정 | 이유 |
 |:-:|:-:|---|
-| ① | ✗ | 두 조인의 분배를 맞바꾼 진술입니다. 업체코드 조인(Id 7)은 소형 공급업체에만 BROADCAST(Id 9)가 붙은 broadcast이고, 품목코드 조인(Id 4)은 Id 6·Id 15 양쪽에 SEND HASH가 붙은 hash-hash입니다 — hash-hash와 broadcast를 서로 바꿔 놓았습니다 |
-| ② | ✗ | `PX SEND BROADCAST`(Id 9)는 소형 공급업체(Id 11) 쪽에 붙어 있고, 대형 납품이행실적(Id 13)은 Id 12 `PX BLOCK ITERATOR`로 제자리 스캔합니다. 복제되는 테이블을 대형·소형으로 뒤바꾼 값스왑입니다 |
+| ① | ✗ | :TQ10000·Q1,02라는 흐름 이름과 조달품목이 약 90만 건이라는 앞부분은 맞지만, 두 조인의 분배를 맞바꾼 진술입니다. 업체코드 조인(Id 7)은 :TQ10000에 `PX SEND BROADCAST`(Id 9)가 붙고 납품이행실적 쪽에는 SEND가 없는 broadcast이고, 품목코드 조인(Id 4)은 Id 6·Id 15 양쪽에 SEND HASH가 붙은 hash-hash입니다 — 두 분배를 서로 바꿔 놓았습니다 |
+| ② | ✗ | Id 9가 :TQ10000을 타는 `PX SEND BROADCAST`이고 공급업체가 약 5,200건이며 Id 10이 `PX BLOCK ITERATOR`라는 앞부분은 맞지만, Id 9·Id 10은 모두 공급업체(Id 11) 쪽 계보에 얹혀 있어 복제되는 것은 소형 공급업체입니다. 대형 납품이행실적(Id 13)이야말로 Id 12 `PX BLOCK ITERATOR`로 SEND 없이 제자리 스캔합니다 — 복제되는 테이블을 대형·소형으로 뒤바꾼 값스왑입니다 |
 | ③ | **○** | 업체코드 조인은 소형 공급업체(Id 11)를 BROADCAST(Id 9)로 복제하고 대형 납품이행실적(Id 13)을 로컬로 읽는 broadcast, 품목코드 조인은 Id 6·Id 15 양쪽을 SEND HASH로 재분배하는 hash-hash로, 두 조인의 분배를 정확히 지목했습니다 |
-| ④ | ✗ | 품목코드 조인의 조달품목(Id 15)은 `PX SEND BROADCAST`가 아니라 `PX SEND HASH`이고, 업체코드 조인 결과(Id 6)도 SEND HASH입니다. 양쪽이 해시로 재분배되는 hash-hash를 broadcast로 본 진술입니다 |
+| ④ | ✗ | 업체코드 조인이 소형 공급업체(Id 11)를 Id 9 BROADCAST로 복제하는 broadcast라는 앞부분은 맞지만, 품목코드 조인의 조달품목(Id 17)을 실어 나르는 Id 15는 `PX SEND BROADCAST`가 아니라 `PX SEND HASH`(:TQ10001)이고 업체코드 조인 결과를 올리는 Id 6도 `PX SEND HASH`(:TQ10002)입니다. 양쪽이 해시로 재분배되는 hash-hash를 broadcast로 본 진술입니다 |
 
 ---
 

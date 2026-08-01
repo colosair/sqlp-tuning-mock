@@ -41,13 +41,13 @@ DBMS: 오라클
 
 ### 선택지
 
-① 대형 사용량집계만 파티션 단위로 각 서버가 자기 조각을 읽고, 공급계약·단가적용은 사용량집계의 파티션 경계에 맞춰 `PX SEND PARTITION (KEY)`로 재분배하는 부분(partial) 파티션 와이즈 조인이다.
+① 대형 사용량집계(Id 7)만 PX PARTITION HASH ALL(Id 4)의 1~64 파티션 단위로 각 서버가 자기 조각을 읽고, 소형 공급계약·단가적용(Id 8·9)은 그 파티션 경계에 맞춰 `PX SEND PARTITION (KEY)`로 재분배된 뒤 Id 6·Id 5의 HASH JOIN에 들어가는 부분(partial) 파티션 와이즈 조인이다. 로컬로 읽히는 것은 사용량집계뿐이다.
 
-② 세 테이블이 계약번호로 동일하게 64개 해시 파티셔닝돼 있어, 각 병렬 서버가 대응하는 파티션 집합만 로컬로 조인한다. 조인 입력 사용량집계·공급계약·단가적용(Id 7·8·9)이 같은 Q1,00·같은 PX PARTITION HASH ALL(Id 4) 아래에서 `PX SEND`/`PX RECEIVE` 없이 읽혀 재분배가 일어나지 않는 (full) 파티션 와이즈 조인이며, Id 3 HASH GROUP BY도 파티션 키(계약번호) 기준이라 서버 로컬로 끝난다.
+② 세 테이블이 계약번호로 동일하게 64 해시 파티셔닝돼 각 병렬 서버가 대응 파티션 집합만 로컬로 조인한다. 조인 입력 Id 7·8·9가 같은 Q1,00·같은 PX PARTITION HASH ALL(Id 4) 아래에서 `PX SEND` 없이 읽혀 재분배가 없는 full 파티션 와이즈 조인이며, Id 3 HASH GROUP BY도 파티션 키 기준이라 서버 로컬로 끝난다.
 
-③ 세 입력을 조인 키 계약번호의 해시로 각각 재분배(hash-hash)한 뒤 각 서버가 자기 버킷 범위의 행만 조인하며, 그 재분배가 Id 3에서 일어난다.
+③ 세 입력을 조인 키 계약번호의 해시로 각각 재분배(hash-hash)한 뒤 각 서버가 자기 버킷 범위의 행만 조인하는 방식이며, 그 재분배는 Id 3 HASH GROUP BY에서 일어난다. Pstart 1~Pstop 64는 재분배 뒤 각 서버가 맡는 버킷 범위를 뜻하고, TQ가 Q1,00 하나인 것도 재분배가 한 번뿐이기 때문이다.
 
-④ 소형 공급계약·단가적용을 병렬 서버 전체에 복제(broadcast)하고 대형 사용량집계만 재분배 없이 파티션 단위로 읽는 broadcast 분배다.
+④ 4,300만 건짜리 소형 공급계약·단가적용(Id 8·9)을 병렬 서버 전체에 복제(broadcast)하고, 3억 6천만 건 대형 사용량집계(Id 7)만 재분배 없이 PX PARTITION HASH ALL(Id 4)의 파티션 단위로 읽는 broadcast 분배다. 복제 덕에 각 서버가 두 마스터를 통째로 들고 Id 5·Id 6에서 조인한다.
 
 ---
 
@@ -83,10 +83,10 @@ Id 9     TABLE ACCESS FULL 단가적용 (Q1,00, 1~64) 조인 입력 — PX SEND 
 
 | 선택지 | 판정 | 이유 |
 |:-:|:-:|---|
-| ① | ✗ | partial 파티션 와이즈면 재분배되는 쪽에 `PX SEND PARTITION (KEY)`가 있어야 하는데, 공급계약·단가적용(Id 8·9) 위에 SEND가 없습니다. 세 테이블이 이미 같은 키로 파티셔닝돼 있어 한쪽만 재분배할 이유도 없습니다 |
+| ① | ✗ | partial 파티션 와이즈면 재분배되는 쪽에 `PX SEND PARTITION (KEY)`가 있어야 하는데, Id 8·9 위에 SEND가 없고 두 노드도 Pstart 1~Pstop 64로 파티션 단위 스캔입니다. 세 테이블이 이미 같은 키로 파티셔닝돼 있어 한쪽만 재분배할 이유도 없습니다 |
 | ② | **○** | 조인 입력 Id 7·8·9가 같은 Q1,00·같은 PX PARTITION HASH ALL(Id 4) 아래에서 SEND 없이 읽혀 대응 파티션 집합만 조인하고, Id 3 HASH GROUP BY도 파티션 키(계약번호) 기준이라 로컬로 끝나는 full 파티션 와이즈 조인입니다 |
-| ③ | ✗ | hash-hash면 조인 입력 세 곳 위에 각각 `PX SEND HASH`가 있어야 합니다. Id 7·8·9엔 SEND가 없고, Id 3은 SEND HASH가 아니라 파티션 로컬 HASH GROUP BY입니다 |
-| ④ | ✗ | broadcast면 소형 쪽에 `PX SEND BROADCAST`가 있어야 하는데 플랜에 BROADCAST 노드가 없습니다. 세 입력 모두 파티션 단위 로컬 스캔이라 복제 자체가 일어나지 않습니다 |
+| ③ | ✗ | hash-hash면 조인 입력 세 곳 위에 각각 `PX SEND HASH`가 있어야 합니다. Id 7·8·9엔 SEND가 없고, Id 3은 SEND HASH가 아니라 파티션 로컬 HASH GROUP BY입니다. Pstart 1~Pstop 64도 해시 버킷이 아니라 실제 파티션 번호이며, TQ가 하나인 것은 재분배가 없다는 뜻입니다 |
+| ④ | ✗ | broadcast면 소형 쪽에 `PX SEND BROADCAST`가 있어야 하는데 플랜에 BROADCAST 노드가 없습니다. Id 2 `PX SEND QC (RANDOM)`은 최종 결과를 QC로 넘기는 P->S 단계일 뿐이고, 세 입력 모두 파티션 단위 로컬 스캔이라 복제 자체가 일어나지 않습니다 |
 
 ---
 

@@ -24,13 +24,13 @@ DBMS: 공통
 
 ### 선택지
 
-① `DBMS_XPLAN.DISPLAY_CURSOR`는 아직 수행하지 않은 문장의 예상 계획을 PLAN_TABLE에서 읽어 오는 함수이므로, `EXPLAIN PLAN`을 선행하지 않고도 `DISPLAY`와 서로 바꿔 써서 예상 계획을 확인할 수 있다.
+① `DBMS_XPLAN.DISPLAY_CURSOR`는 `EXPLAIN PLAN`이 PLAN_TABLE에 적재해 둔 예상 계획을 SQL_ID 없이 읽어 오는 함수이므로, 아직 수행하지 않은 문장이라도 `EXPLAIN PLAN`을 선행하지 않고 `DISPLAY`와 서로 바꿔 써서 같은 예상 계획을 확인할 수 있다. 바인드 변수가 섞여 있어도 두 함수가 같은 PLAN_TABLE을 보므로 결과가 갈리지 않는다.
 
 ② `DBMS_XPLAN.DISPLAY`는 `EXPLAIN PLAN`이 PLAN_TABLE에 적재한 예상 계획을 보여 주고, `DBMS_XPLAN.DISPLAY_CURSOR`는 라이브러리 캐시에 올라온 실제 수행된 커서의 계획을 보여 준다. 바인드 변수가 있으면 `EXPLAIN PLAN`은 그 값을 엿보지(bind peeking) 못해, 실제 수행 시의 계획과 서로 달라질 수 있다.
 
-③ `EXPLAIN PLAN`은 대상 문장을 실제로 파싱·수행하면서 바인드 변수 값을 반영해 계획을 세우므로, `DISPLAY`로 조회한 예상 계획이 곧 실제 커서의 계획과 같다.
+③ `EXPLAIN PLAN`은 대상 문장을 실제로 파싱·수행하면서 바인드 변수 값을 엿보아(bind peeking) 계획을 세운 뒤 그 결과를 PLAN_TABLE에 적재하므로, `DISPLAY`로 조회한 예상 계획은 라이브러리 캐시에 올라온 실제 커서의 계획과 언제나 같다. 따라서 바인드 변수 탓에 예상과 실제가 갈리는 일은 생기지 않는다.
 
-④ AUTOTRACE의 `SET AUTOTRACE TRACEONLY EXPLAIN`으로 출력되는 계획은 라이브러리 캐시의 실제 커서에서 가져온 것이라, 실측 행 수가 포함된 실제 실행계획이며 `DISPLAY_CURSOR`로 본 계획과 같다.
+④ AUTOTRACE에서 `SET AUTOTRACE TRACEONLY EXPLAIN`을 켜고 조회했을 때 출력되는 계획은 문장을 수행한 뒤 라이브러리 캐시의 실제 커서에서 끌어온 것이라 실측 행 수가 함께 표시되며, 같은 문장을 `DBMS_XPLAN.DISPLAY_CURSOR`로 조회한 실제 실행계획과 노드 구성·행 수가 그대로 일치한다.
 
 ---
 
@@ -56,18 +56,18 @@ DBMS_XPLAN.DISPLAY_CURSOR
 
 나머지는 두 함수의 출처·성격을 뒤섞었습니다.
 
-- ①는 `DISPLAY_CURSOR`를 "PLAN_TABLE의 예상 계획을 읽는 함수"로 봤지만, 이 함수는 **라이브러리 캐시의 실제 수행 커서**를 읽습니다. `DISPLAY`와 서로 바꿔 쓸 수 있는 것이 아닙니다.
-- ③은 `EXPLAIN PLAN`이 문장을 수행하고 바인드 값을 반영한다고 했으나, `EXPLAIN PLAN`은 문장을 **수행하지 않고** 바인드 값도 **엿보지 않습니다.** 그래서 예상과 실제가 갈릴 수 있습니다.
-- ④는 `TRACEONLY EXPLAIN`을 실제 커서 조회로 오해했습니다. 이 옵션은 `EXPLAIN PLAN` 방식의 **예상** 계획을 낼 뿐, 문장을 수행하지 않아 실측 행 수가 담기지 않습니다.
+- ①는 `DISPLAY_CURSOR`를 "PLAN_TABLE의 예상 계획을 읽는 함수"로 봤지만, 이 함수는 **라이브러리 캐시(V$SQL_PLAN)의 실제 수행 커서**를 읽습니다. 출처가 다르니 `DISPLAY`와 서로 바꿔 쓸 수 없고, 수행하지 않은 문장에는 애초에 커서가 없습니다.
+- ③은 `EXPLAIN PLAN`이 문장을 수행하고 바인드 값을 엿본다고 했으나, `EXPLAIN PLAN`은 문장을 **수행하지 않고** 바인드 값도 **엿보지 않습니다.** 그래서 예상과 실제가 갈릴 수 있어 "언제나 같다"는 단정이 무너집니다.
+- ④는 `TRACEONLY EXPLAIN`을 실제 커서 조회로 오해했습니다. 이 옵션은 `EXPLAIN PLAN` 방식의 **예상** 계획을 낼 뿐 문장을 수행하지 않아 실측 행 수가 담기지 않으며, `DISPLAY_CURSOR` 결과와 일치한다는 보장도 없습니다.
 
 ### 오답 이유
 
 | 선택지 | 판정 | 이유 |
 |:-:|:-:|---|
-| ① | ✗ | `DISPLAY_CURSOR`는 PLAN_TABLE이 아니라 라이브러리 캐시의 실제 수행 커서를 읽습니다. `DISPLAY`와 바꿔 쓸 수 있는 예상 계획 함수가 아닙니다 |
+| ① | ✗ | `DISPLAY_CURSOR`는 PLAN_TABLE이 아니라 라이브러리 캐시(V$SQL_PLAN)의 실제 수행 커서를 읽습니다. 수행하지 않은 문장에는 쓸 수 없고, 출처가 다르므로 `DISPLAY`와 바꿔 써서 같은 예상 계획을 얻을 수도 없습니다 |
 | ② | **○** | `DISPLAY`는 PLAN_TABLE의 예상 계획, `DISPLAY_CURSOR`는 실제 수행된 커서의 계획을 조회하며, `EXPLAIN PLAN`은 bind peeking을 못 해 실제와 갈릴 수 있습니다. 출처와 원인이 정확합니다 |
-| ③ | ✗ | `EXPLAIN PLAN`은 문장을 수행하지도, 바인드 값을 엿보지도 않습니다. 예상 계획과 실제 커서 계획이 갈릴 수 있는 이유가 바로 이것입니다 |
-| ④ | ✗ | `TRACEONLY EXPLAIN`은 `EXPLAIN PLAN` 방식의 예상 계획을 낼 뿐 문장을 수행하지 않아 실측 행 수가 없고, 실제 커서에서 가져온 것도 아닙니다 |
+| ③ | ✗ | `EXPLAIN PLAN`은 문장을 수행하지도, 바인드 값을 엿보지도 않습니다. 예상 계획과 실제 커서 계획이 갈릴 수 있는 이유가 바로 이것이라 두 계획이 늘 같다는 단정은 성립하지 않습니다 |
+| ④ | ✗ | `TRACEONLY EXPLAIN`은 문장을 수행하지 않고 `EXPLAIN PLAN` 방식의 예상 계획만 내므로 실측 행 수가 없고, 실제 커서에서 가져온 것도 아니어서 `DISPLAY_CURSOR` 결과와 일치한다는 보장이 없습니다 |
 
 ---
 

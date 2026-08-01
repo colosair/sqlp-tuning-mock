@@ -41,13 +41,13 @@ DBMS: 오라클
 
 ### 선택지
 
-① 운송기록과 검수내역이 둘 다 운송장번호로 파티셔닝돼 있어, 각 서버가 대응 파티션 쌍만 재분배 없이 조인하는 (full) 파티션 와이즈 조인이다.
+① 운송기록과 검수내역이 둘 다 운송장번호로 해시 파티셔닝돼 있어, Id 4 `PX PARTITION HASH ALL`(Pstart 1~Pstop 16)이 대응 파티션 쌍을 한 서버에 모아 준다. Id 3 HASH JOIN은 재분배 없이 쌍만 조인하는 (full) 파티션 와이즈 조인이고, Id 7 :TQ10000은 결과를 QC로 넘기는 통로다.
 
 ② 운송기록은 파티션 단위로 각 서버가 자기 파티션을 재분배 없이 읽고(Id 4 PX PARTITION HASH ALL), 검수내역만 Id 7 `PX SEND PARTITION (KEY)`로 운송기록의 파티션 경계에 맞춰 재분배하는 부분(partial) 파티션 와이즈 조인이다.
 
-③ 운송기록과 검수내역을 양쪽 다 운송장번호 해시로 재분배하는 hash-hash 분배이며, Id 5·Id 9 위에 각각 `PX SEND HASH`가 놓여 두 스트림을 새 해시 버킷으로 흩는다.
+③ Id 7의 :TQ10000과 Id 2의 :TQ10001 두 테이블 큐를 거쳐 운송기록과 검수내역을 양쪽 다 운송장번호 해시로 재분배하는 hash-hash 분배이며, Id 5·Id 9 위에 각각 `PX SEND HASH`가 놓여 두 스트림을 Q1,00·Q1,01의 새 해시 버킷으로 흩은 뒤 Id 3 HASH JOIN이 받아 조인한다.
 
-④ 검수내역은 파티션 단위로 재분배 없이 읽고, 운송기록만 `PX SEND PARTITION (KEY)`로 검수내역의 파티션 경계에 맞춰 재분배하는 부분 파티션 와이즈 조인이다.
+④ 검수내역은 Id 8 `PX BLOCK ITERATOR`로 각 서버가 자기 블록 범위를 재분배 없이 읽고, 파티셔닝된 운송기록만 Id 7 `PX SEND PARTITION (KEY)`로 검수내역이 흩어진 경계에 맞춰 Q1,00에서 Q1,01로 재분배하는 부분(partial) 파티션 와이즈 조인이다.
 
 ---
 
@@ -83,10 +83,10 @@ Id 3  HASH JOIN (Q1,01) ← Id 4(운송기록)·Id 6 PX RECEIVE(검수내역)를
 
 | 선택지 | 판정 | 이유 |
 |:-:|:-:|---|
-| ① | ✗ | full 파티션 와이즈면 양쪽 조인 입력에 `PX SEND`가 없어야 하는데, 검수내역 쪽 Id 7에 `PX SEND PARTITION (KEY)`가 있습니다. 검수내역은 파티셔닝돼 있지도 않아 파티션 쌍 로컬 조인이 성립하지 않습니다 |
+| ① | ✗ | 검수내역은 파티셔닝돼 있지 않다고 발문이 못박았으므로 대응 파티션 쌍 자체가 없습니다. full 파티션 와이즈면 양쪽 조인 입력에 `PX SEND`가 없어야 하는데 Id 7에 `PX SEND PARTITION (KEY)`가 걸려 있고, Id 7은 QC로 넘기는 통로도 아닙니다 — QC 전송은 P->S인 Id 2 `PX SEND QC (RANDOM)`입니다 |
 | ② | **○** | 운송기록은 Id 4 `PX PARTITION HASH ALL`로 재분배 없이 파티션 로컬 읽기, 검수내역만 Id 7 `PX SEND PARTITION (KEY)`로 운송기록 파티션에 맞춰 재분배 — 부분 파티션 와이즈 조인과 일치합니다 |
-| ③ | ✗ | hash-hash면 두 입력 위에 각각 `PX SEND HASH`가 있어야 합니다. 운송기록 쪽엔 `PX SEND`가 아예 없고(Id 4는 파티션 스캔), 검수내역 쪽은 `SEND HASH`가 아니라 `SEND PARTITION (KEY)`입니다 |
-| ④ | ✗ | 재분배되는 쪽과 로컬로 읽는 쪽을 뒤바꿨습니다. Id 7 `PX SEND PARTITION (KEY)`가 걸린 것은 파티셔닝 안 된 검수내역이고, 파티션 로컬로 읽히는 것은 운송기록(Id 4)입니다 |
+| ③ | ✗ | 두 테이블 큐가 있다는 것은 사실이나 :TQ10001은 조인 결과를 QC로 보내는 Id 2용이지 분배용이 아닙니다. hash-hash면 Id 5·Id 9 위에 각각 `PX SEND HASH`가 있어야 하는데 운송기록 쪽엔 `PX SEND`가 아예 없고(Id 4는 PCWC 파티션 스캔), 검수내역 쪽도 `SEND HASH`가 아니라 `SEND PARTITION (KEY)`입니다 |
+| ④ | ✗ | 재분배되는 쪽과 로컬로 읽는 쪽을 뒤바꿨습니다. Id 7 `PX SEND PARTITION (KEY)`가 걸린 것은 Id 8 `PX BLOCK ITERATOR`로 읽히는 검수내역이고, Id 4 `PX PARTITION HASH ALL`로 파티션 로컬 읽기를 하는 쪽이 운송기록입니다. 파티셔닝 안 된 검수내역을 로컬 기준으로 삼을 수도 없습니다 |
 
 ---
 

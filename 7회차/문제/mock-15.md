@@ -42,13 +42,13 @@ ALTER TABLE 수입신고
 
 ### 선택지
 
-① `INSERT /*+ APPEND */`는 세그먼트 HWM 위에 새 블록을 직접 기록하는 Direct Path 적재이고, 대상 테이블이 NOLOGGING이며 FORCE LOGGING도 아니므로 이 적재의 데이터 리두가 최소화(minimal logging)된다. 이후 EXCHANGE PARTITION은 데이터를 물리 이동하지 않고 딕셔너리에서 세그먼트를 맞바꾸는 메타데이터 연산이라 대용량이라도 순식간에 끝난다.
+① `INSERT /*+ APPEND */`는 HWM 위에 새 블록을 직접 기록하는 Direct Path 적재이고, `수입신고_당일`이 NOLOGGING이며 DB가 FORCE LOGGING도 아니므로 데이터 리두가 최소화(minimal logging)된다. 이후 EXCHANGE PARTITION은 딕셔너리에서 세그먼트를 맞바꾸는 메타데이터 연산이라 데이터 이동 없이 끝난다.
 
-② 병렬 DML은 `PARALLEL` 힌트만 주면 세션 설정과 무관하게 INSERT 부분이 병렬로 수행되므로, `ALTER SESSION ENABLE PARALLEL DML` 문장은 실제 병렬 적재에 영향을 주지 않는 관례적 선언에 불과하다.
+② `PARALLEL(t, 4)` 힌트가 INSERT 대상 별칭 t에 직접 걸려 있으므로 세션 설정과 무관하게 적재가 4개 병렬 서버로 나뉘어 수행된다. 앞줄의 `ALTER SESSION ENABLE PARALLEL DML`은 병렬도를 정하지도 힌트를 바꾸지도 않는, 관례적으로 붙이는 선언일 뿐이라 실제 병렬 적재에는 영향을 주지 않는다.
 
-③ Direct Path 적재가 진행되는 동안에도 다른 세션은 `수입신고_당일`에 자유롭게 일반 INSERT/UPDATE를 수행할 수 있으며, 적재 세션은 커밋 전까지 그 테이블에 배타적 잠금을 걸지 않는다.
+③ Direct Path 적재는 버퍼 캐시를 우회해 HWM 위 새 블록에만 기록하므로 기존 블록을 건드리지 않는다. 그래서 이 INSERT가 도는 동안에도 다른 세션은 `수입신고_당일`에 일반 INSERT·UPDATE를 자유롭게 수행할 수 있고, 적재 세션은 COMMIT 전까지 그 테이블에 배타적 잠금을 걸지 않는다.
 
-④ EXCHANGE PARTITION에 `WITHOUT VALIDATION`을 주면 검증 비용을 없애는 동시에, 임시 테이블에 대상 파티션 범위를 벗어난 행이 섞여 있어도 오라클이 교환 시점에 이를 안전하게 걸러 올바른 파티션으로 자동 재배치한다.
+④ `EXCHANGE PARTITION`에 `WITHOUT VALIDATION`을 주면 임시 테이블 400만 건을 일일이 검사하는 비용이 사라지는 동시에, p_20260718의 신고일자 범위를 벗어난 행이 섞여 있어도 오라클이 교환 시점에 그 행을 걸러 올바른 파티션으로 자동 재배치해 준다. `INCLUDING INDEXES`가 로컬 인덱스 정합까지 함께 맞춰 준다.
 
 ---
 
@@ -67,7 +67,9 @@ PARALLEL(t,4)         → SELECT뿐 아니라 INSERT까지 병렬로 하려면
 EXCHANGE PARTITION    → 세그먼트 포인터만 맞바꾸는 딕셔너리 연산 → 데이터 이동 없음
 ```
 
-①은 세 가지를 모두 정확히 서술합니다. APPEND는 HWM 위 직접 기록(Direct Path)이고, NOLOGGING + 비FORCE LOGGING 조건이 갖춰지면 데이터 리두가 minimal logging으로 줄며, EXCHANGE PARTITION은 세그먼트를 맞바꾸는 메타데이터 연산이라 800만이든 8억이든 데이터를 옮기지 않아 즉시 끝납니다. 경계 조건(NOLOGGING이되 FORCE LOGGING이 아닐 것)까지 발문과 일치하므로 옳은 진술은 ①입니다.
+①은 세 가지를 모두 정확히 서술합니다. APPEND는 HWM 위 직접 기록(Direct Path)이고, NOLOGGING + 비FORCE LOGGING 조건이 갖춰지면 데이터 리두가 minimal logging으로 줄며, EXCHANGE PARTITION은 세그먼트를 맞바꾸는 메타데이터 연산이라 400만이든 8억이든 데이터를 옮기지 않아 즉시 끝납니다. 경계 조건(NOLOGGING이되 FORCE LOGGING이 아닐 것)까지 발문과 일치하므로 옳은 진술은 ①입니다.
+
+한편 [아 래] ②의 주석은 '임시 테이블에 대상 파티션의 로컬 인덱스와 짝이 되는 인덱스를 만들어 둔 뒤 교환한다'는 절차를 가리킬 뿐, 그 인덱스 생성문 자체는 판단에 필요하지 않아 생략돼 있습니다. 교환문의 `INCLUDING INDEXES`가 바로 그렇게 만들어 둔 임시 테이블 인덱스를 대상 파티션의 로컬 인덱스와 함께 맞바꾸는 절이며, 이 역시 데이터 이동 없는 딕셔너리 연산입니다.
 
 ②③④는 각 기능의 동작 경계를 뭉갠 **경계 오해**입니다(아래 표).
 
@@ -76,9 +78,9 @@ EXCHANGE PARTITION    → 세그먼트 포인터만 맞바꾸는 딕셔너리 �
 | 선택지 | 판정 | 이유 |
 |:-:|:-:|---|
 | ① | **○** | APPEND는 HWM 위 Direct Path 기록이고, NOLOGGING+비FORCE LOGGING이면 데이터 리두가 최소화되며, EXCHANGE는 세그먼트를 맞바꾸는 메타데이터 연산이라 즉시 끝납니다 |
-| ② | ✗ | 힌트만으로는 SELECT만 병렬이 되고 INSERT는 직렬입니다. INSERT까지 병렬 DML로 돌리려면 `ENABLE PARALLEL DML` 선언이 반드시 선행돼야 합니다 — 이 문장은 필수입니다 |
-| ③ | ✗ | Direct Path 적재는 대상 테이블에 배타적 테이블 잠금을 걸어, 커밋 전까지 다른 세션의 일반 DML을 막습니다. 자유로운 동시 DML은 불가능합니다 |
-| ④ | ✗ | `WITHOUT VALIDATION`은 범위 검증을 생략할 뿐 자동 재배치가 아닙니다. 범위를 벗어난 행이 섞이면 그대로 파티션에 들어가 프루닝·조회가 어긋납니다 |
+| ② | ✗ | `PARALLEL(t, 4)`가 대상 별칭에 걸려 있어도 힌트만으로는 SELECT만 병렬이 되고 INSERT는 직렬입니다. INSERT까지 병렬 DML로 돌리려면 `ENABLE PARALLEL DML` 선언이 선행돼야 하므로, 그 문장을 관례적 선언으로 본 것이 경계를 뭉갠 지점입니다 |
+| ③ | ✗ | HWM 위 새 블록에만 쓰는 것은 맞지만, Direct Path 적재는 그동안 대상 테이블에 배타적 테이블 잠금을 걸어 COMMIT 전까지 다른 세션의 일반 DML을 막습니다. 자유로운 동시 INSERT·UPDATE는 불가능합니다 |
+| ④ | ✗ | `WITHOUT VALIDATION`은 400만 건의 범위 검증을 생략할 뿐 자동 재배치가 아닙니다. p_20260718 범위를 벗어난 행이 섞이면 그대로 그 파티션에 들어가 프루닝·조회가 어긋나며, `INCLUDING INDEXES`도 인덱스 교환만 맡습니다 |
 
 ---
 
